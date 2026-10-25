@@ -4,6 +4,7 @@ project(KeyShorts LANGUAGES CXX RC)
 add_executable(KeyShorts WIN32
     src/main.cpp
     src/ui.cpp
+    src/ui_rule.cpp
     src/engine.cpp
     src/config.cpp
     src/keys.cpp
@@ -21,11 +22,15 @@ target_compile_definitions(KeyShorts PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
-target_link_libraries(KeyShorts PRIVATE comctl32 shell32 advapi32 ole32)
+target_link_libraries(KeyShorts PRIVATE comctl32 comdlg32 shell32 advapi32 ole32)
 
 if(MSVC)
     target_compile_options(KeyShorts PRIVATE /W4 /O1 /GS- /Gy /Gw /utf-8 /permissive-)
-    target_link_options(KeyShorts PRIVATE /OPT:REF /OPT:ICF /INCREMENTAL:NO)
+    target_link_options(KeyShorts PRIVATE
+        /OPT:REF /OPT:ICF /INCREMENTAL:NO
+        /MANIFEST:EMBED
+        "/MANIFESTINPUT:${CMAKE_CURRENT_SOURCE_DIR}/src/app.manifest"
+    )
     set_property(TARGET KeyShorts PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 else()
     target_compile_options(KeyShorts PRIVATE -Os -Wall -Wextra -municode)
