@@ -22,7 +22,7 @@ target_compile_definitions(KeyShorts PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
-target_link_libraries(KeyShorts PRIVATE comctl32 comdlg32 shell32 advapi32 ole32)
+target_link_libraries(KeyShorts PRIVATE comctl32 comdlg32 shell32 advapi32 ole32 oleaut32 uuid shlwapi)
 
 if(MSVC)
     target_compile_options(KeyShorts PRIVATE /W4 /O1 /GS- /Gy /Gw /utf-8 /permissive-)

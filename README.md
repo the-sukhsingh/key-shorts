@@ -94,6 +94,8 @@ repeat=0
 
 `type` is one of `launch`, `command`, `sendkeys`, `remap`. Scoped rules always win over global rules with the same trigger.
 
+`launch` and `command` rules start in the active File Explorer folder, falling back to your home folder when no folder is open.
+
 ## Limits
 
 - Windows hooks cannot see keys while an elevated (admin) window is focused unless KeyShorts also runs elevated.

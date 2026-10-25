@@ -3,6 +3,13 @@
 
 #include <algorithm>
 #include <shellapi.h>
+#include <objbase.h>
+#include <oleauto.h>
+#include <exdisp.h>
+#include <knownfolders.h>
+#include <shlobj.h>
+#include <shlwapi.h>
+#include <cwchar>
 #include <cwctype>
 #include <cstdlib>
 
@@ -31,6 +38,142 @@ void SendKeyWithMods(int vk, UINT extra, UINT held, UINT* sticky) {
     if (pressSticky) InjectModsUp(pressSticky, kSigMacro);
     InjectModsUp(pressExtra, kSigMacro);
     *sticky = 0;
+}
+
+class ScopedCom {
+public:
+    ScopedCom() : result_(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)) {}
+    ~ScopedCom() {
+        if (SUCCEEDED(result_)) CoUninitialize();
+    }
+    bool usable() const { return SUCCEEDED(result_) || result_ == RPC_E_CHANGED_MODE; }
+
+private:
+    HRESULT result_;
+};
+
+bool IsDirectoryPath(const std::wstring& path) {
+    if (path.empty()) return false;
+    DWORD attributes = GetFileAttributesW(path.c_str());
+    return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+}
+
+std::wstring HomeDirectory() {
+    PWSTR raw = nullptr;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_Profile, KF_FLAG_DEFAULT, nullptr, &raw)) && raw) {
+        std::wstring path(raw);
+        CoTaskMemFree(raw);
+        if (IsDirectoryPath(path)) return path;
+    }
+
+    wchar_t buffer[MAX_PATH]{};
+    DWORD length = GetEnvironmentVariableW(L"USERPROFILE", buffer, MAX_PATH);
+    if (length > 0 && length < MAX_PATH) {
+        std::wstring path(buffer);
+        if (IsDirectoryPath(path)) return path;
+    }
+    return {};
+}
+
+bool IsExplorerWindow(HWND hwnd) {
+    wchar_t className[64]{};
+    if (!hwnd || !GetClassNameW(hwnd, className, 64)) return false;
+    return _wcsicmp(className, L"CabinetWClass") == 0 || _wcsicmp(className, L"ExploreWClass") == 0;
+}
+
+BOOL CALLBACK FindExplorerProc(HWND hwnd, LPARAM param) {
+    if (!IsWindowVisible(hwnd) || IsIconic(hwnd)) return TRUE;
+    if (IsExplorerWindow(hwnd)) {
+        *reinterpret_cast<HWND*>(param) = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+HWND FindExplorerWindow() {
+    HWND foreground = GetForegroundWindow();
+    if (foreground) {
+        HWND root = GetAncestor(foreground, GA_ROOT);
+        if (IsExplorerWindow(root)) return root;
+    }
+
+    HWND found = nullptr;
+    EnumWindows(FindExplorerProc, reinterpret_cast<LPARAM>(&found));
+    return found;
+}
+
+std::wstring FileUrlToPath(const wchar_t* url) {
+    if (!url || !*url) return {};
+
+    DWORD length = 1024;
+    std::wstring path(length, L'\0');
+    HRESULT result = PathCreateFromUrlW(url, path.data(), &length, 0);
+    if (result == E_NOT_SUFFICIENT_BUFFER) {
+        path.resize(length);
+        result = PathCreateFromUrlW(url, path.data(), &length, 0);
+    }
+    if (FAILED(result)) return {};
+
+    path.resize(wcslen(path.c_str()));
+    return path;
+}
+
+std::wstring ExplorerFolder() {
+    HWND target = FindExplorerWindow();
+    if (!target) return {};
+
+    ScopedCom com;
+    if (!com.usable()) return {};
+
+    IShellWindows* windows = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_ShellWindows, nullptr, CLSCTX_LOCAL_SERVER,
+                                IID_PPV_ARGS(&windows))) ||
+        !windows) {
+        return {};
+    }
+
+    std::wstring folder;
+    long count = 0;
+    if (SUCCEEDED(windows->get_Count(&count))) {
+        for (long index = 0; index < count; ++index) {
+            VARIANT item;
+            VariantInit(&item);
+            item.vt = VT_I4;
+            item.lVal = index;
+
+            IDispatch* dispatch = nullptr;
+            HRESULT result = windows->Item(item, &dispatch);
+            VariantClear(&item);
+            if (FAILED(result) || !dispatch) continue;
+
+            IWebBrowserApp* browser = nullptr;
+            if (SUCCEEDED(dispatch->QueryInterface(IID_PPV_ARGS(&browser))) && browser) {
+                SHANDLE_PTR handle = 0;
+                if (SUCCEEDED(browser->get_HWND(&handle)) &&
+                    reinterpret_cast<HWND>(handle) == target) {
+                    BSTR url = nullptr;
+                    if (SUCCEEDED(browser->get_LocationURL(&url)) && url) {
+                        folder = FileUrlToPath(url);
+                        SysFreeString(url);
+                    }
+                }
+                browser->Release();
+            }
+            dispatch->Release();
+
+            if (!folder.empty()) break;
+        }
+    }
+    windows->Release();
+
+    if (!IsDirectoryPath(folder)) return {};
+    return folder;
+}
+
+std::wstring LaunchDirectory() {
+    std::wstring folder = ExplorerFolder();
+    if (!folder.empty()) return folder;
+    return HomeDirectory();
 }
 
 } // namespace
@@ -381,16 +524,19 @@ void Engine::RunJob(const Job& job) {
         std::wstring target = ExpandEnv(job.target);
         std::wstring args = ExpandEnv(job.args);
         if (target.empty()) return;
-        ShellExecuteW(nullptr, L"open", target.c_str(), args.empty() ? nullptr : args.c_str(), nullptr, SW_SHOWNORMAL);
+        std::wstring directory = LaunchDirectory();
+        ShellExecuteW(nullptr, L"open", target.c_str(), args.empty() ? nullptr : args.c_str(),
+                      directory.empty() ? nullptr : directory.c_str(), SW_SHOWNORMAL);
         break;
     }
     case RT_COMMAND: {
         std::wstring command = L"cmd.exe /d /s /c \"" + job.target + L"\"";
+        std::wstring directory = LaunchDirectory();
         STARTUPINFOW si{};
         si.cb = sizeof(si);
         PROCESS_INFORMATION pi{};
         if (CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
-                           nullptr, nullptr, &si, &pi)) {
+                           nullptr, directory.empty() ? nullptr : directory.c_str(), &si, &pi)) {
             CloseHandle(pi.hThread);
             CloseHandle(pi.hProcess);
         }
