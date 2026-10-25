@@ -35,7 +35,7 @@ cmake --build build --config Release
 ## Usage
 
 1. Run `KeyShorts.exe`. It opens the rule manager and stays in the tray when closed.
-2. Press **Add**, then **Set...** next to Trigger and press the key combination you want.
+2. Press **+ Add rule**, then **Set...** next to Trigger and press the key combination you want.
 3. Choose an action:
    - **Launch program** - target is an exe or a URL (opened with `ShellExecute`).
    - **Run command** - target is passed to `cmd.exe /c`.
@@ -75,6 +75,7 @@ Example: `{CTRL}{SHIFT}{ESC}` opens Task Manager. `{WIN}r` opens Run. `Hi{ENTER}
 ## Config
 
 ```ini
+version=1
 enabled=1
 run_at_startup=1
 
