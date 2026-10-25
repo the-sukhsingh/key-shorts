@@ -177,6 +177,13 @@ int VkFromName(const std::wstring& name) {
         long value = wcstol(lower.c_str() + 3, &end, 16);
         if (end && *end == L'\0' && value > 0 && value < 256) return static_cast<int>(value);
     }
+    if (lower.size() >= 2 && lower.size() <= 3 && lower[0] == L'f') {
+        wchar_t* end = nullptr;
+        long number = wcstol(lower.c_str() + 1, &end, 10);
+        if (end && *end == L'\0' && number >= 1 && number <= 24) {
+            return VK_F1 + static_cast<int>(number) - 1;
+        }
+    }
     if (lower.size() > 6 && lower.compare(0, 6, L"numpad") == 0) {
         wchar_t c = lower[6];
         if (c >= L'0' && c <= L'9' && lower.size() == 7) return VK_NUMPAD0 + (c - L'0');
