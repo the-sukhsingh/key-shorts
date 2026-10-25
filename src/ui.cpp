@@ -61,6 +61,8 @@ void SetControlFont(HWND control, HFONT font) {
     if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
 }
 
+void LayoutMain(HWND hwnd);
+
 std::wstring GetControlText(HWND control) {
     int length = GetWindowTextLengthW(control);
     std::wstring text(static_cast<size_t>(length) + 1, L'\0');
@@ -182,6 +184,7 @@ void RefreshList() {
     InvalidateRect(g_list, nullptr, TRUE);
     g_updating = false;
     UpdateSelectionButtons();
+    if (g_hwnd) LayoutMain(g_hwnd);
 }
 
 void UpdateStatus() {
