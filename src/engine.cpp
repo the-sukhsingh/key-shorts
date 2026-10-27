@@ -17,6 +17,12 @@ namespace {
 
 constexpr UINT_PTR kRepeatTimerBase = 0x1000;
 
+// Reserved key code (VK_NONAME). No application reacts to it, but Windows
+// counts it as a key press when deciding whether the Win key was tapped alone.
+constexpr int kNoOpVk = 0xFC;
+
+bool IsWinVk(int vk) { return vk == VK_LWIN || vk == VK_RWIN; }
+
 UINT ModBitFromWord(const std::wstring& word) {
     std::wstring w = Lower(Trim(word));
     if (w == L"ctrl" || w == L"control" || w == L"lctrl" || w == L"rctrl") return KS_CTRL;
@@ -245,6 +251,7 @@ void Engine::Stop() {
     if (worker_.joinable()) worker_.join();
 
     for (auto& repeat : repeats_) repeat.active = false;
+    winShield_ = false;
     paused_.store(false);
 }
 
@@ -426,6 +433,7 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
             }
             swallowUp_[vk] = false;
             if (repeats_[vk].active) StopRepeat(vk);
+            if (IsWinVk(vk)) winShield_ = false;
         } else {
             down_[vk] = true;
         }
@@ -445,6 +453,15 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
             consumed = true;
         }
         if (repeats_[vk].active) StopRepeat(vk);
+        if (winShield_ && IsWinVk(vk)) {
+            // Windows opens the Start menu when the Win key is released without
+            // any other key press in between. The swallowed trigger key never
+            // reached Windows, so send a no-op key before letting this release
+            // through, otherwise every Win+key shortcut also pops Start.
+            winShield_ = false;
+            InjectVk(kNoOpVk, true, kSigMacro);
+            InjectVk(kNoOpVk, false, kSigMacro);
+        }
         return consumed;
     }
 
@@ -472,6 +489,11 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
     if (swallowSource && IsModifierVk(vk)) {
         // The app never sees this physical modifier; injected output tracks its own state.
         down_[vk] = false;
+    }
+    if (swallowSource && (rule.trigger.mods & KS_WIN)) {
+        // This Win press reached Windows and the trigger key will not, so the
+        // release needs shielding from the Start menu's lone-Win detection.
+        winShield_ = true;
     }
 
     if (rule.type == RT_REMAP) {

@@ -88,6 +88,9 @@ private:
     bool down_[256] = {};
     bool swallowUp_[256] = {};
     bool remapActive_[256] = {};
+    // Set when a swallowed Win+key rule fires, so the Win key-up can be
+    // preceded by a no-op key and Windows does not treat it as a lone tap.
+    bool winShield_ = false;
     KeyCombo remapHold_[256];
     RepeatState repeats_[256];
 
