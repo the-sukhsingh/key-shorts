@@ -34,14 +34,16 @@
 #define IDC_SWALLOW      1114
 #define IDC_REPEAT       1115
 #define IDC_HINT         1116
+#define IDC_REUSE        1117
 
 // Tray menu commands
 #define IDM_SHOW       2001
 #define IDM_ENABLED    2002
 #define IDM_STARTUP    2003
-#define IDM_CONFIG     2004
-#define IDM_EXIT       2005
-#define IDM_RELOAD     2006
+#define IDM_CONFIG        2004
+#define IDM_EXIT          2005
+#define IDM_RELOAD        2006
+#define IDM_CONFIGFOLDER  2007
 
 // Private messages
 #define WM_APP_TRAY      (WM_APP + 1)
