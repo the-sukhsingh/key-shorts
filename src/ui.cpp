@@ -1,41 +1,33 @@
 ﻿#include "ui.h"
 #include "config.h"
+#include "controls.h"
 #include "engine.h"
 #include "resource.h"
+#include "theme.h"
 #include "ui_rule.h"
 #include "util.h"
 
 #include <commctrl.h>
 #include <shellapi.h>
+#include <windowsx.h>
+
+#include <algorithm>
 
 namespace {
 
 HINSTANCE g_instance = nullptr;
 HWND g_hwnd = nullptr;
 HWND g_list = nullptr;
-HWND g_title = nullptr;
-HWND g_subtitle = nullptr;
-HWND g_master = nullptr;
-HWND g_startup = nullptr;
 HWND g_add = nullptr;
 HWND g_edit = nullptr;
 HWND g_delete = nullptr;
 HWND g_reload = nullptr;
-HWND g_openCfg = nullptr;
-HWND g_hide = nullptr;
-HWND g_status = nullptr;
-
-HFONT g_font = nullptr;
-HFONT g_fontBold = nullptr;
-HFONT g_fontTitle = nullptr;
-HFONT g_fontList = nullptr;
-HFONT g_fontListBold = nullptr;
-HBRUSH g_white = nullptr;
-UINT g_dpi = 96;
+HWND g_cfgButton = nullptr;
+HWND g_master = nullptr;
+HWND g_startup = nullptr;
 
 Config g_cfg;
 int g_invalid = 0;
-bool g_updating = false;
 bool g_engineOk = true;
 
 bool g_trayAdded = false;
@@ -43,32 +35,90 @@ HICON g_trayIcon = nullptr;
 bool g_ownsTrayIcon = false;
 NOTIFYICONDATAW g_nid{};
 
-int S(int value) {
-    return MulDiv(value, static_cast<int>(g_dpi), 96);
+constexpr wchar_t kListClass[] = L"KeyShortsList";
+
+constexpr wchar_t kGlyphAdd[] = L"\xE710";
+constexpr wchar_t kGlyphEdit[] = L"\xE70F";
+constexpr wchar_t kGlyphDelete[] = L"\xE74D";
+constexpr wchar_t kGlyphReload[] = L"\xE72C";
+constexpr wchar_t kGlyphFolder[] = L"\xE8B7";
+constexpr wchar_t kGlyphKeyboard[] = L"\xE765";
+constexpr wchar_t kGlyphCheck[] = L"\xE73E";
+
+int g_sel = -1;
+int g_hover = -1;
+int g_scroll = 0;
+bool g_scrollHot = false;
+bool g_dragScroll = false;
+int g_dragOffset = 0;
+RECT g_emptyButton{};
+RECT g_thumbRect{};
+RECT g_trackRect{};
+
+void LayoutMain();
+void RefreshList();
+void UpdateControls();
+void UpdateStatus();
+void UpdateSelectionButtons();
+void AddRule();
+void EditSelectedRule();
+void DeleteSelectedRule();
+void ToggleRuleEnabled(int index);
+bool PersistConfig();
+void ApplyEngine();
+void OnListAdd();
+void OnListActivate();
+void OnListToggle(int index);
+
+int HeaderH() {
+    return theme::S(34);
 }
 
-HFONT CreateUiFont(int points, int weight) {
-    LOGFONTW lf{};
-    lf.lfHeight = -MulDiv(points, static_cast<int>(g_dpi), 72);
-    lf.lfWeight = weight;
-    lf.lfCharSet = DEFAULT_CHARSET;
-    lf.lfQuality = CLEARTYPE_QUALITY;
-    wcscpy_s(lf.lfFaceName, L"Segoe UI");
-    return CreateFontIndirectW(&lf);
+int RowH() {
+    return theme::S(44);
 }
 
-void SetControlFont(HWND control, HFONT font) {
-    if (control) SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+int ContentH() {
+    return HeaderH() + static_cast<int>(g_cfg.rules.size()) * RowH();
 }
 
-void LayoutMain(HWND hwnd);
+int MaxScroll(int viewHeight) {
+    return std::max(0, ContentH() - viewHeight);
+}
 
-std::wstring GetControlText(HWND control) {
-    int length = GetWindowTextLengthW(control);
-    std::wstring text(static_cast<size_t>(length) + 1, L'\0');
-    int copied = GetWindowTextW(control, text.data(), length + 1);
-    text.resize(static_cast<size_t>(copied));
-    return text;
+void ClampScroll() {
+    if (!g_list) return;
+    RECT rc{};
+    GetClientRect(g_list, &rc);
+    g_scroll = std::min(g_scroll, MaxScroll(rc.bottom));
+    if (g_scroll < 0) g_scroll = 0;
+}
+
+void EnsureVisible(int index) {
+    if (!g_list) return;
+    RECT rc{};
+    GetClientRect(g_list, &rc);
+    int top = HeaderH() + index * RowH() - g_scroll;
+    int bottom = top + RowH();
+    if (top < HeaderH()) {
+        g_scroll = index * RowH();
+    } else if (bottom > rc.bottom) {
+        g_scroll = HeaderH() + (index + 1) * RowH() - rc.bottom;
+    }
+    ClampScroll();
+}
+
+int SelectedRuleIndex() {
+    if (g_sel < 0 || g_sel >= static_cast<int>(g_cfg.rules.size())) return -1;
+    return g_sel;
+}
+
+void SelectRule(int index) {
+    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return;
+    g_sel = index;
+    EnsureVisible(index);
+    if (g_list) InvalidateRect(g_list, nullptr, FALSE);
+    UpdateSelectionButtons();
 }
 
 bool WriteStartupEntry(bool enabled) {
@@ -100,151 +150,119 @@ bool PersistConfig() {
     return ok;
 }
 
-std::wstring ActionText(const Rule& rule) {
-    std::wstring text;
+struct ActionParts {
+    std::wstring verb;
+    std::wstring detail;
+};
+
+ActionParts SplitAction(const Rule& rule) {
     switch (rule.type) {
     case RT_REMAP:
-        text = L"Remap to " + (rule.target.empty() ? std::wstring(L"(not set)") : rule.target);
-        break;
-    case RT_LAUNCH:
-        text = L"Launch " + (rule.target.empty() ? std::wstring(L"(not set)") : FileNameOf(rule.target));
-        if (!rule.args.empty()) text += L" " + rule.args;
-        break;
-    case RT_COMMAND:
-        text = L"Run " + (rule.target.empty() ? std::wstring(L"(not set)") : rule.target);
-        break;
-    case RT_SENDKEYS:
-        text = L"Keys " + (rule.target.empty() ? std::wstring(L"(not set)") : rule.target);
-        break;
-    default:
-        text = L"(unknown)";
-        break;
+        return {L"Remap to", rule.target.empty() ? std::wstring(L"(not set)") : rule.target};
+    case RT_LAUNCH: {
+        std::wstring detail = rule.target.empty() ? std::wstring(L"(not set)") : FileNameOf(rule.target);
+        if (!rule.args.empty()) detail += L" " + rule.args;
+        return {L"Launch", detail};
     }
-    if (text.size() > 90) text = text.substr(0, 87) + L"...";
-    return text;
+    case RT_COMMAND:
+        return {L"Run", rule.target.empty() ? std::wstring(L"(not set)") : rule.target};
+    case RT_SENDKEYS:
+        return {L"Send", rule.target.empty() ? std::wstring(L"(not set)") : rule.target};
+    default:
+        return {L"", L"(unknown)"};
+    }
 }
 
 std::wstring ScopeText(const Rule& rule) {
     if (rule.scope != RS_APP) return L"Global";
     std::wstring app = Trim(rule.app);
-    return L"Only in " + (app.empty() ? std::wstring(L"(no app)") : app);
+    return app.empty() ? std::wstring(L"(no app)") : app;
 }
 
-int SelectedRuleIndex() {
-    int item = ListView_GetNextItem(g_list, -1, LVNI_SELECTED);
-    if (item < 0) return -1;
-    LVITEMW data{};
-    data.mask = LVIF_PARAM;
-    data.iItem = item;
-    if (!ListView_GetItem(g_list, &data)) return -1;
-    return static_cast<int>(data.lParam);
+void StatusInfo(std::wstring& text, COLORREF& dot) {
+    if (!g_engineOk) {
+        dot = theme::kDanger;
+        text = L"Keyboard hook unavailable";
+        return;
+    }
+    if (!g_cfg.enabled) {
+        dot = theme::kTextMuted;
+        text = L"Paused";
+        return;
+    }
+    if (g_invalid > 0) {
+        dot = theme::kDanger;
+        text = std::to_wstring(g_invalid);
+        text += g_invalid == 1 ? L" rule needs attention" : L" rules need attention";
+        return;
+    }
+    dot = theme::kAccent;
+    text = L"Active";
 }
 
-void SelectRule(int index) {
-    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return;
-    ListView_SetItemState(g_list, index, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
-    ListView_EnsureVisible(g_list, index, FALSE);
+void UpdateTrayTip() {
+    if (!g_trayAdded) return;
+    std::wstring tip = L"KeyShorts: " + std::to_wstring(g_cfg.rules.size()) +
+                       (g_cfg.rules.size() == 1 ? L" rule, " : L" rules, ") +
+                       (g_cfg.enabled ? L"active" : L"paused");
+    wcsncpy_s(g_nid.szTip, tip.c_str(), _TRUNCATE);
+    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
 }
 
-void SetSubItemText(int item, int column, const std::wstring& text) {
-    ListView_SetItemText(g_list, item, column, const_cast<wchar_t*>(text.c_str()));
+void UpdateStatus() {
+    if (g_hwnd) InvalidateRect(g_hwnd, nullptr, FALSE);
+    UpdateTrayTip();
+}
+
+void UpdateControls() {
+    if (g_master) ui::SetSwitchOn(g_master, g_cfg.enabled);
+    if (g_startup) ui::SetSwitchOn(g_startup, g_cfg.runAtStartup);
+    UpdateStatus();
+}
+
+void ApplyEngine() {
+    g_invalid = Engine::Instance().Reload(g_cfg, g_cfg.enabled);
+    UpdateStatus();
+    if (g_list) InvalidateRect(g_list, nullptr, FALSE);
+}
+
+void SetMasterEnabled(bool enabled) {
+    g_cfg.enabled = enabled;
+    Engine::Instance().SetEnabled(enabled);
+    if (g_master) ui::SetSwitchOn(g_master, enabled);
+    PersistConfig();
+    UpdateStatus();
+}
+
+void SetStartupEnabled(bool enabled) {
+    if (!WriteStartupEntry(enabled)) {
+        MessageBoxW(g_hwnd, L"Could not update the Windows startup entry.", kAppName, MB_ICONWARNING);
+        if (g_startup) ui::SetSwitchOn(g_startup, g_cfg.runAtStartup);
+        return;
+    }
+    g_cfg.runAtStartup = enabled;
+    if (g_startup) ui::SetSwitchOn(g_startup, enabled);
+    PersistConfig();
 }
 
 void UpdateSelectionButtons() {
-    bool hasSelection = g_list && ListView_GetSelectedCount(g_list) > 0;
+    bool hasSelection = SelectedRuleIndex() >= 0;
     if (g_edit) EnableWindow(g_edit, hasSelection);
     if (g_delete) EnableWindow(g_delete, hasSelection);
 }
 
 void RefreshList() {
     if (!g_list) return;
-    g_updating = true;
-    SendMessageW(g_list, WM_SETREDRAW, FALSE, 0);
-    ListView_DeleteAllItems(g_list);
-
-    for (int i = 0; i < static_cast<int>(g_cfg.rules.size()); ++i) {
-        const Rule& rule = g_cfg.rules[static_cast<size_t>(i)];
-        std::wstring name = rule.name.empty() ? std::wstring(L"(unnamed)") : rule.name;
-
-        LVITEMW item{};
-        item.mask = LVIF_TEXT | LVIF_PARAM;
-        item.iItem = i;
-        item.pszText = const_cast<wchar_t*>(name.c_str());
-        item.lParam = i;
-        int inserted = ListView_InsertItem(g_list, &item);
-        if (inserted < 0) continue;
-
-        SetSubItemText(inserted, 1, rule.trigger);
-        SetSubItemText(inserted, 2, ActionText(rule));
-        SetSubItemText(inserted, 3, ScopeText(rule));
-        ListView_SetCheckState(g_list, inserted, rule.enabled ? TRUE : FALSE);
-    }
-
-    SendMessageW(g_list, WM_SETREDRAW, TRUE, 0);
-    InvalidateRect(g_list, nullptr, TRUE);
-    g_updating = false;
+    int count = static_cast<int>(g_cfg.rules.size());
+    if (g_sel >= count) g_sel = count - 1;
+    if (g_sel < -1) g_sel = -1;
+    if (count == 0) g_sel = -1;
+    if (g_hover >= count) g_hover = -1;
+    ClampScroll();
+    InvalidateRect(g_list, nullptr, FALSE);
     UpdateSelectionButtons();
-    if (g_hwnd) LayoutMain(g_hwnd);
-}
-
-void UpdateStatus() {
-    if (!g_status) return;
-
-    std::wstring text = std::to_wstring(g_cfg.rules.size());
-    text += g_cfg.rules.size() == 1 ? L" rule" : L" rules";
-    if (g_invalid > 0) text += L" \u00B7 " + std::to_wstring(g_invalid) + L" invalid";
-    text += g_cfg.enabled ? L" \u00B7 Active" : L" \u00B7 Paused";
-    if (!g_engineOk) text += L" \u00B7 hook unavailable";
-    SetWindowTextW(g_status, text.c_str());
-    InvalidateRect(g_status, nullptr, TRUE);
-}
-
-void UpdateTrayTip() {
-    if (!g_trayAdded) return;
-    std::wstring tip = L"KeyShorts - " + std::to_wstring(g_cfg.rules.size()) +
-                       (g_cfg.enabled ? L" rules - active" : L" rules - paused");
-    wcsncpy_s(g_nid.szTip, tip.c_str(), _TRUNCATE);
-    g_nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    Shell_NotifyIconW(NIM_MODIFY, &g_nid);
-}
-
-void UpdateControls() {
-    if (g_master) {
-        SendMessageW(g_master, BM_SETCHECK, g_cfg.enabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    }
-    if (g_startup) {
-        SendMessageW(g_startup, BM_SETCHECK, g_cfg.runAtStartup ? BST_CHECKED : BST_UNCHECKED, 0);
-    }
     UpdateStatus();
-    UpdateTrayTip();
-}
-
-void ApplyEngine() {
-    g_invalid = Engine::Instance().Reload(g_cfg, g_cfg.enabled);
-    UpdateStatus();
-    UpdateTrayTip();
-}
-
-void SetMasterEnabled(bool enabled) {
-    g_cfg.enabled = enabled;
-    Engine::Instance().SetEnabled(enabled);
-    if (g_master) SendMessageW(g_master, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    PersistConfig();
-    UpdateStatus();
-    UpdateTrayTip();
-}
-
-void SetStartupEnabled(bool enabled) {
-    if (!WriteStartupEntry(enabled)) {
-        MessageBoxW(g_hwnd, L"Could not update the Windows startup entry.", kAppName, MB_ICONWARNING);
-        if (g_startup) {
-            SendMessageW(g_startup, BM_SETCHECK, g_cfg.runAtStartup ? BST_CHECKED : BST_UNCHECKED, 0);
-        }
-        return;
-    }
-    g_cfg.runAtStartup = enabled;
-    if (g_startup) SendMessageW(g_startup, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
-    PersistConfig();
 }
 
 void AddTrayIcon() {
@@ -341,7 +359,7 @@ void AddRule() {
 
 void EditSelectedRule() {
     int index = SelectedRuleIndex();
-    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return;
+    if (index < 0) return;
 
     Rule rule = g_cfg.rules[static_cast<size_t>(index)];
     if (!ShowRuleDialog(g_hwnd, rule, false)) return;
@@ -355,7 +373,7 @@ void EditSelectedRule() {
 
 void DeleteSelectedRule() {
     int index = SelectedRuleIndex();
-    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return;
+    if (index < 0) return;
 
     std::wstring name = g_cfg.rules[static_cast<size_t>(index)].name;
     std::wstring message = L"Delete \"" + name + L"\"?";
@@ -367,6 +385,27 @@ void DeleteSelectedRule() {
     RefreshList();
 }
 
+void ToggleRuleEnabled(int index) {
+    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return;
+    Rule& rule = g_cfg.rules[static_cast<size_t>(index)];
+    rule.enabled = !rule.enabled;
+    PersistConfig();
+    ApplyEngine();
+    RefreshList();
+}
+
+void OnListAdd() {
+    AddRule();
+}
+
+void OnListActivate() {
+    EditSelectedRule();
+}
+
+void OnListToggle(int index) {
+    ToggleRuleEnabled(index);
+}
+
 void ShowTrayMenu() {
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
@@ -374,8 +413,10 @@ void ShowTrayMenu() {
     AppendMenuW(menu, MF_STRING, IDM_SHOW, L"Open KeyShorts");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING | (g_cfg.enabled ? MF_CHECKED : 0), IDM_ENABLED, L"Enabled");
-    AppendMenuW(menu, MF_STRING | (g_cfg.runAtStartup ? MF_CHECKED : 0), IDM_STARTUP, L"Run at startup");
+    AppendMenuW(menu, MF_STRING | (g_cfg.runAtStartup ? MF_CHECKED : 0), IDM_STARTUP,
+                L"Start with Windows");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, IDM_CONFIGFOLDER, L"Open config folder");
     AppendMenuW(menu, MF_STRING, IDM_CONFIG, L"Open config file");
     AppendMenuW(menu, MF_STRING, IDM_RELOAD, L"Reload config");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -384,132 +425,493 @@ void ShowTrayMenu() {
     POINT point{};
     GetCursorPos(&point);
     SetForegroundWindow(g_hwnd);
-    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, point.x, point.y, 0, g_hwnd, nullptr);
+    TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, point.x, point.y, 0, g_hwnd,
+                   nullptr);
     DestroyMenu(menu);
     PostMessageW(g_hwnd, WM_NULL, 0, 0);
 }
 
-void LayoutMain(HWND hwnd) {
-    if (!g_list) return;
+struct Columns {
+    int check = 0;
+    int name = 0;
+    int nameW = 0;
+    int trig = 0;
+    int trigW = 0;
+    int act = 0;
+    int actW = 0;
+    int scope = 0;
+    int scopeW = 0;
+};
+
+Columns ListColumns(int width) {
+    Columns c;
+    c.check = theme::S(16);
+    c.name = theme::S(44);
+    c.nameW = std::max(theme::S(150), width * 24 / 100);
+    c.trig = c.name + c.nameW + theme::S(16);
+    c.trigW = std::max(theme::S(170), width * 26 / 100);
+    c.scopeW = std::max(theme::S(100), width * 15 / 100);
+    c.scope = width - theme::S(16) - c.scopeW;
+    c.act = c.trig + c.trigW + theme::S(16);
+    c.actW = std::max(theme::S(100), c.scope - theme::S(16) - c.act);
+    return c;
+}
+
+int HitRow(int y) {
+    if (y < HeaderH()) return -1;
+    int index = (y - HeaderH() + g_scroll) / RowH();
+    if (index < 0 || index >= static_cast<int>(g_cfg.rules.size())) return -1;
+    return index;
+}
+
+void PaintList(HDC dc, int width, int height) {
+    if (width <= 0 || height <= 0) return;
+
+    theme::FillSolid(dc, RECT{0, 0, width, height}, theme::kBg);
+    RECT card{0, 0, width, height};
+    theme::FillRound(dc, card, theme::S(12), theme::kCard);
+
+    HRGN clip = CreateRoundRectRgn(0, 0, width + 1, height + 1, theme::S(24), theme::S(24));
+    int saved = SaveDC(dc);
+    SelectClipRgn(dc, clip);
+
+    Columns columns = ListColumns(width);
+    int header = HeaderH();
+    int rowHeight = RowH();
+
+    theme::DrawLabel(dc, L"Name", RECT{columns.name, 0, columns.name + columns.nameW, header},
+                     theme::Font().meta, theme::kTextMuted);
+    theme::DrawLabel(dc, L"Trigger", RECT{columns.trig, 0, columns.trig + columns.trigW, header},
+                     theme::Font().meta, theme::kTextMuted);
+    theme::DrawLabel(dc, L"Action", RECT{columns.act, 0, columns.act + columns.actW, header},
+                     theme::Font().meta, theme::kTextMuted);
+    theme::DrawLabel(dc, L"Scope", RECT{columns.scope, 0, columns.scope + columns.scopeW, header},
+                     theme::Font().meta, theme::kTextMuted,
+                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    theme::FillSolid(dc, RECT{0, header - 1, width, header}, theme::kHairlineSoft);
+
+    int count = static_cast<int>(g_cfg.rules.size());
+    for (int i = 0; i < count; ++i) {
+        int y = header + i * rowHeight - g_scroll;
+        if (y + rowHeight <= header || y >= height) continue;
+
+        const Rule& rule = g_cfg.rules[static_cast<size_t>(i)];
+        bool selected = i == g_sel;
+        bool hovered = i == g_hover;
+        bool enabledRule = rule.enabled;
+
+        if (selected) {
+            theme::FillSolid(dc, RECT{0, y, width, y + rowHeight}, theme::kRowSelected);
+            theme::FillSolid(dc, RECT{0, y, theme::S(2), y + rowHeight}, theme::kAccent);
+        } else if (hovered) {
+            theme::FillSolid(dc, RECT{0, y, width, y + rowHeight}, theme::kRowHover);
+        }
+
+        if (i < count - 1) {
+            theme::FillSolid(dc, RECT{columns.name, y + rowHeight - 1, width - theme::S(16),
+                                      y + rowHeight},
+                             theme::kSeparator);
+        }
+
+        int box = theme::S(16);
+        int boxY = y + (rowHeight - box) / 2;
+        RECT boxRect{columns.check, boxY, columns.check + box, boxY + box};
+        theme::FillRound(dc, boxRect, theme::S(4), enabledRule ? theme::kAccent : theme::kRaised);
+        if (!enabledRule) theme::StrokeRound(dc, boxRect, theme::S(4), theme::kHairline);
+        if (enabledRule) {
+            theme::DrawGlyph(dc, boxRect, kGlyphCheck, theme::Font().iconSmall, theme::kAccentInk);
+        }
+
+        std::wstring name = rule.name.empty() ? std::wstring(L"(unnamed)") : rule.name;
+        theme::DrawLabel(dc, name, RECT{columns.name, y, columns.name + columns.nameW, y + rowHeight},
+                         theme::Font().body, enabledRule ? theme::kText : theme::kTextMuted);
+
+        theme::DrawKeycaps(dc, rule.trigger, columns.trig, y + (rowHeight - theme::S(22)) / 2,
+                           columns.trigW, enabledRule);
+
+        ActionParts parts = SplitAction(rule);
+        SIZE verbSize = theme::MeasureText(dc, parts.verb, theme::Font().meta);
+        theme::DrawLabel(dc, parts.verb,
+                         RECT{columns.act, y, columns.act + verbSize.cx, y + rowHeight},
+                         theme::Font().meta, theme::kTextMuted);
+        theme::DrawLabel(dc, parts.detail,
+                         RECT{columns.act + verbSize.cx + theme::S(6), y,
+                              columns.act + columns.actW, y + rowHeight},
+                         theme::Font().body,
+                         enabledRule ? theme::kTextSecondary : theme::kTextMuted);
+
+        theme::DrawLabel(dc, ScopeText(rule),
+                         RECT{columns.scope, y, columns.scope + columns.scopeW, y + rowHeight},
+                         theme::Font().meta,
+                         rule.scope == RS_APP ? theme::kTextSecondary : theme::kTextMuted,
+                         DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+    }
+
+    g_emptyButton = RECT{};
+    g_thumbRect = RECT{};
+    g_trackRect = RECT{};
+
+    if (count == 0) {
+        int cx = width / 2;
+        int cy = header + (height - header) / 2;
+        RECT key{cx - theme::S(28), cy - theme::S(92), cx + theme::S(28), cy - theme::S(36)};
+        theme::FillRound(dc, key, theme::S(12), theme::kKeyEdge);
+        RECT keyInner{key.left, key.top, key.right, key.bottom - theme::S(2)};
+        theme::FillRound(dc, keyInner, theme::S(12), theme::kKey);
+        theme::DrawGlyph(dc, keyInner, kGlyphKeyboard, theme::Font().icon, theme::kTextSecondary);
+
+        theme::DrawLabel(dc, L"No rules yet",
+                         RECT{cx - theme::S(220), cy - theme::S(22), cx + theme::S(220),
+                              cy + theme::S(4)},
+                         theme::Font().wordmark, theme::kText,
+                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        theme::DrawLabel(dc, L"Add a rule to launch an app, send keys or remap a key.",
+                         RECT{cx - theme::S(260), cy + theme::S(10), cx + theme::S(260),
+                              cy + theme::S(32)},
+                         theme::Font().meta, theme::kTextMuted,
+                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+        g_emptyButton = RECT{cx - theme::S(58), cy + theme::S(48), cx + theme::S(58),
+                             cy + theme::S(80)};
+        theme::FillRound(dc, g_emptyButton, theme::S(8), theme::kAccent);
+        theme::DrawLabel(dc, L"Add rule", g_emptyButton, theme::Font().bodyBold, theme::kAccentInk,
+                         DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+
+    int maxScroll = MaxScroll(height);
+    if (maxScroll > 0) {
+        int trackWidth = theme::S(4);
+        int trackX = width - theme::S(8);
+        int trackY = header + theme::S(4);
+        int trackH = height - trackY - theme::S(4);
+        g_trackRect = RECT{trackX, trackY, trackX + trackWidth, trackY + trackH};
+        theme::FillRound(dc, g_trackRect, trackWidth / 2, RGB(0x0E, 0x11, 0x18));
+
+        int thumbH = std::max(theme::S(24), trackH * height / std::max(height, ContentH()));
+        int thumbY = trackY + (trackH - thumbH) * g_scroll / maxScroll;
+        g_thumbRect = RECT{trackX, thumbY, trackX + trackWidth, thumbY + thumbH};
+        theme::FillRound(dc, g_thumbRect, trackWidth / 2,
+                         (g_scrollHot || g_dragScroll) ? RGB(0x3A, 0x42, 0x52)
+                                                       : RGB(0x2A, 0x31, 0x40));
+    }
+
+    RestoreDC(dc, saved);
+    DeleteObject(clip);
+
+    theme::StrokeRound(dc, card, theme::S(12), theme::kHairline);
+}
+
+void PaintMain(HWND hwnd) {
+    PAINTSTRUCT ps{};
+    HDC dc = BeginPaint(hwnd, &ps);
     RECT client{};
     GetClientRect(hwnd, &client);
+    theme::FillSolid(dc, client, theme::kBg);
+
+    int margin = theme::S(24);
+
+    RECT mark{margin, theme::S(16), margin + theme::S(28), theme::S(44)};
+    theme::FillRound(dc, mark, theme::S(6), theme::kKeyEdge);
+    RECT markInner{mark.left, mark.top, mark.right, mark.bottom - theme::S(2)};
+    theme::FillRound(dc, markInner, theme::S(6), theme::kKey);
+    theme::DrawLabel(dc, L"K", markInner, theme::Font().monoBold, theme::kText,
+                     DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    int textX = mark.right + theme::S(12);
+    theme::DrawLabel(dc, L"KeyShorts",
+                     RECT{textX, theme::S(12), textX + theme::S(320), theme::S(34)},
+                     theme::Font().wordmark, theme::kText);
+
+    std::wstring status;
+    COLORREF dotColor = theme::kAccent;
+    StatusInfo(status, dotColor);
+    theme::FillEllipse(dc, RECT{textX, theme::S(39), textX + theme::S(6), theme::S(45)}, dotColor);
+    theme::DrawLabel(dc, status,
+                     RECT{textX + theme::S(12), theme::S(33), textX + theme::S(360),
+                          theme::S(51)},
+                     theme::Font().meta, theme::kTextSecondary);
+
+    int switchX = client.right - margin - theme::S(36);
+    theme::DrawLabel(dc, L"Enabled",
+                     RECT{margin, theme::S(14), switchX - theme::S(8), theme::S(34)},
+                     theme::Font().meta, theme::kTextSecondary,
+                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    theme::DrawLabel(dc, L"Start with Windows",
+                     RECT{margin, theme::S(38), switchX - theme::S(8), theme::S(58)},
+                     theme::Font().meta, theme::kTextSecondary,
+                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    int footerY = client.bottom - theme::S(38);
+    std::wstring count = std::to_wstring(g_cfg.rules.size());
+    count += g_cfg.rules.size() == 1 ? L" rule" : L" rules";
+    SIZE countSize = theme::MeasureText(dc, count, theme::Font().mono);
+    theme::DrawLabel(dc, count, RECT{margin, footerY, margin + countSize.cx, footerY + theme::S(18)},
+                     theme::Font().mono, theme::kTextMuted);
+    if (g_invalid > 0) {
+        std::wstring invalid = L", " + std::to_wstring(g_invalid) + L" invalid";
+        theme::DrawLabel(dc, invalid,
+                         RECT{margin + countSize.cx, footerY,
+                              margin + countSize.cx + theme::S(180), footerY + theme::S(18)},
+                         theme::Font().mono, theme::kDanger);
+    }
+
+    theme::DrawLabel(dc, L"Close this window to keep KeyShorts running in the tray",
+                     RECT{client.right - margin - theme::S(360), footerY, client.right - margin,
+                          footerY + theme::S(18)},
+                     theme::Font().meta, theme::kTextMuted,
+                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+
+    EndPaint(hwnd, &ps);
+}
+
+void LayoutMain() {
+    if (!g_hwnd || !g_list) return;
+    RECT client{};
+    GetClientRect(g_hwnd, &client);
     int width = client.right;
     int height = client.bottom;
     if (width <= 0 || height <= 0) return;
 
-    int margin = S(20);
+    int margin = theme::S(24);
     int right = width - margin;
 
-    MoveWindow(g_title, margin + S(12), S(12), S(420), S(30), TRUE);
-    MoveWindow(g_subtitle, margin + S(12), S(44), S(560), S(20), TRUE);
-    MoveWindow(g_master, right - S(180), S(18), S(180), S(22), TRUE);
-    MoveWindow(g_startup, right - S(180), S(44), S(180), S(22), TRUE);
+    int switchW = theme::S(36);
+    int switchH = theme::S(20);
+    MoveWindow(g_master, right - switchW, theme::S(14), switchW, switchH, TRUE);
+    MoveWindow(g_startup, right - switchW, theme::S(38), switchW, switchH, TRUE);
 
-    int toolbarY = S(88);
-    MoveWindow(g_add, margin, toolbarY, S(96), S(30), TRUE);
-    MoveWindow(g_edit, margin + S(104), toolbarY, S(76), S(30), TRUE);
-    MoveWindow(g_delete, margin + S(188), toolbarY, S(86), S(30), TRUE);
-    MoveWindow(g_openCfg, right - S(112), toolbarY, S(112), S(30), TRUE);
-    MoveWindow(g_reload, right - S(112) - S(8) - S(84), toolbarY, S(84), S(30), TRUE);
+    int toolbarY = theme::S(72);
+    int buttonH = theme::S(32);
+    int x = margin;
+    MoveWindow(g_add, x, toolbarY, theme::S(116), buttonH, TRUE);
+    x += theme::S(116) + theme::S(8);
+    MoveWindow(g_edit, x, toolbarY, theme::S(84), buttonH, TRUE);
+    x += theme::S(84) + theme::S(8);
+    MoveWindow(g_delete, x, toolbarY, theme::S(92), buttonH, TRUE);
 
-    int listY = S(134);
-    int listHeight = height - listY - S(62);
-    if (listHeight < S(60)) listHeight = S(60);
-    int listWidth = width - 2 * margin;
-    MoveWindow(g_list, margin, listY, listWidth, listHeight, TRUE);
+    int configW = theme::S(132);
+    int reloadW = theme::S(92);
+    MoveWindow(g_cfgButton, right - configW, toolbarY, configW, buttonH, TRUE);
+    MoveWindow(g_reload, right - configW - theme::S(8) - reloadW, toolbarY, reloadW, buttonH, TRUE);
 
-    MoveWindow(g_status, margin, height - S(40), listWidth - S(100), S(20), TRUE);
-    MoveWindow(g_hide, right - S(84), height - S(46), S(84), S(30), TRUE);
-
-    RECT listClient{};
-    GetClientRect(g_list, &listClient);
-    int colName = S(230);
-    int colTrigger = S(180);
-    int colScope = S(180);
-    int colAction = listClient.right - colName - colTrigger - colScope - S(4);
-    if (colAction < S(160)) colAction = S(160);
-    ListView_SetColumnWidth(g_list, 0, colName);
-    ListView_SetColumnWidth(g_list, 1, colTrigger);
-    ListView_SetColumnWidth(g_list, 2, colAction);
-    ListView_SetColumnWidth(g_list, 3, colScope);
+    int listY = theme::S(112);
+    int listHeight = height - listY - theme::S(56);
+    if (listHeight < theme::S(80)) listHeight = theme::S(80);
+    MoveWindow(g_list, margin, listY, width - margin * 2, listHeight, TRUE);
 }
 
 void OnCreate(HWND hwnd) {
     g_hwnd = hwnd;
+    theme::Init();
+    theme::ApplyDarkChrome(hwnd);
 
-    g_font = CreateUiFont(9, FW_NORMAL);
-    g_fontBold = CreateUiFont(9, FW_SEMIBOLD);
-    g_fontTitle = CreateUiFont(19, FW_SEMIBOLD);
-    g_fontList = CreateUiFont(10, FW_NORMAL);
-    g_fontListBold = CreateUiFont(10, FW_SEMIBOLD);
+    g_master = ui::Switch(hwnd, IDC_MASTER, 0, 0);
+    g_startup = ui::Switch(hwnd, IDC_STARTUP, 0, 0);
 
-    auto makeStatic = [&](int id, const wchar_t* text, HFONT font) {
-        HWND control = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
-                                       0, 0, 10, 10, hwnd,
-                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_instance, nullptr);
-        SetControlFont(control, font);
-        return control;
-    };
-    auto makeButton = [&](int id, const wchar_t* text, HFONT font) {
-        HWND control = CreateWindowExW(0, L"BUTTON", text,
-                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-                                       0, 0, 10, 10, hwnd,
-                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_instance, nullptr);
-        SetControlFont(control, font);
-        return control;
-    };
-    auto makeCheck = [&](int id, const wchar_t* text, HFONT font) {
-        HWND control = CreateWindowExW(0, L"BUTTON", text,
-                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                                       0, 0, 10, 10, hwnd,
-                                       reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), g_instance, nullptr);
-        SetControlFont(control, font);
-        return control;
-    };
+    g_add = ui::Button(hwnd, IDC_ADD, L"Add rule", kGlyphAdd, ui::ButtonStyle::Primary, 0, 0, 10, 10);
+    g_edit = ui::Button(hwnd, IDC_EDIT, L"Edit", kGlyphEdit, ui::ButtonStyle::Ghost, 0, 0, 10, 10);
+    g_delete =
+        ui::Button(hwnd, IDC_DELETE, L"Delete", kGlyphDelete, ui::ButtonStyle::Ghost, 0, 0, 10, 10);
+    g_reload =
+        ui::Button(hwnd, IDC_RELOAD, L"Reload", kGlyphReload, ui::ButtonStyle::Ghost, 0, 0, 10, 10);
+    g_cfgButton = ui::Button(hwnd, IDC_OPENCFG, L"Config folder", kGlyphFolder,
+                             ui::ButtonStyle::Ghost, 0, 0, 10, 10);
 
-    g_title = makeStatic(IDC_TITLE, L"KeyShorts", g_fontTitle);
-    g_subtitle = makeStatic(IDC_SUBTITLE,
-                            L"Global shortcuts \u00B7 per-app rules \u00B7 remaps \u00B7 macros", g_font);
-    g_master = makeCheck(IDC_MASTER, L"Enabled", g_font);
-    g_startup = makeCheck(IDC_STARTUP, L"Run at startup", g_font);
-
-    g_add = makeButton(IDC_ADD, L"+ Add rule", g_fontBold);
-    g_edit = makeButton(IDC_EDIT, L"Edit", g_font);
-    g_delete = makeButton(IDC_DELETE, L"Delete", g_font);
-    g_reload = makeButton(IDC_RELOAD, L"Reload", g_font);
-    g_openCfg = makeButton(IDC_OPENCFG, L"Open config", g_font);
-    g_hide = makeButton(IDC_HIDE, L"Hide to tray", g_font);
-
-    g_status = makeStatic(IDC_STATUS, L"", g_font);
-
-    g_list = CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
-                             WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL |
-                                 LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
-                             0, 0, 10, 10, hwnd,
-                             reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)), g_instance, nullptr);
-    ListView_SetExtendedListViewStyle(g_list,
-                                      LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER |
-                                          LVS_EX_CHECKBOXES | LVS_EX_LABELTIP);
-    ListView_SetBkColor(g_list, RGB(255, 255, 255));
-    ListView_SetTextBkColor(g_list, RGB(255, 255, 255));
-    SetControlFont(g_list, g_fontList);
-
-    const wchar_t* columns[] = {L"Name", L"Trigger", L"Action", L"Scope"};
-    for (int i = 0; i < 4; ++i) {
-        LVCOLUMNW column{};
-        column.mask = LVCF_TEXT | LVCF_WIDTH | LVCF_SUBITEM;
-        column.iSubItem = i;
-        column.pszText = const_cast<wchar_t*>(columns[i]);
-        column.cx = S(100);
-        ListView_InsertColumn(g_list, i, &column);
-    }
-    HWND header = ListView_GetHeader(g_list);
-    if (header) SetControlFont(header, g_fontListBold);
+    g_list = CreateWindowExW(0, kListClass, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP, 0, 0, 10, 10,
+                             hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(IDC_LIST)),
+                             g_instance, nullptr);
 
     RefreshList();
     UpdateControls();
-    LayoutMain(hwnd);
+    LayoutMain();
     SetFocus(g_list);
+}
+
+LRESULT CALLBACK ListProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
+    switch (message) {
+    case WM_ERASEBKGND:
+        return 1;
+
+    case WM_PAINT: {
+        PAINTSTRUCT ps{};
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        if (rc.right > 0 && rc.bottom > 0) {
+            HDC memory = CreateCompatibleDC(dc);
+            HBITMAP bitmap = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+            HGDIOBJ old = SelectObject(memory, bitmap);
+            PaintList(memory, rc.right, rc.bottom);
+            BitBlt(dc, 0, 0, rc.right, rc.bottom, memory, 0, 0, SRCCOPY);
+            SelectObject(memory, old);
+            DeleteObject(bitmap);
+            DeleteDC(memory);
+        }
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+
+    case WM_SIZE:
+        ClampScroll();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+
+    case WM_LBUTTONDOWN: {
+        SetFocus(hwnd);
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        if (g_cfg.rules.empty()) {
+            POINT point{x, y};
+            if (PtInRect(&g_emptyButton, point)) OnListAdd();
+            return 0;
+        }
+
+        POINT point{x, y};
+        if (g_thumbRect.right > g_thumbRect.left && PtInRect(&g_thumbRect, point)) {
+            g_dragScroll = true;
+            g_dragOffset = y - g_thumbRect.top;
+            SetCapture(hwnd);
+            return 0;
+        }
+        if (g_trackRect.right > g_trackRect.left && PtInRect(&g_trackRect, point)) {
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            int maxScroll = MaxScroll(rc.bottom);
+            if (maxScroll > 0) {
+                g_scroll += (y < g_thumbRect.top ? -1 : 1) * rc.bottom / 2;
+                ClampScroll();
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+
+        int index = HitRow(y);
+        if (index >= 0) {
+            Columns columns = ListColumns(g_list ? [&] {
+                RECT rc{};
+                GetClientRect(hwnd, &rc);
+                return rc.right;
+            }() : 0);
+            if (x >= columns.check && x <= columns.check + theme::S(16)) {
+                SelectRule(index);
+                OnListToggle(index);
+                return 0;
+            }
+            SelectRule(index);
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONDBLCLK: {
+        int index = HitRow(GET_Y_LPARAM(lParam));
+        if (index >= 0) {
+            SelectRule(index);
+            OnListActivate();
+        }
+        return 0;
+    }
+
+    case WM_LBUTTONUP:
+        if (g_dragScroll) {
+            g_dragScroll = false;
+            ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_MOUSEMOVE: {
+        int x = GET_X_LPARAM(lParam);
+        int y = GET_Y_LPARAM(lParam);
+
+        if (g_dragScroll) {
+            RECT rc{};
+            GetClientRect(hwnd, &rc);
+            int maxScroll = MaxScroll(rc.bottom);
+            int trackH = g_trackRect.bottom - g_trackRect.top;
+            int thumbH = g_thumbRect.bottom - g_thumbRect.top;
+            int span = trackH - thumbH;
+            if (span > 0 && maxScroll > 0) {
+                int position = y - g_dragOffset - g_trackRect.top;
+                position = std::clamp(position, 0, span);
+                g_scroll = position * maxScroll / span;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            return 0;
+        }
+
+        POINT point{x, y};
+        int index = HitRow(y);
+        bool scrollHot = g_thumbRect.right > g_thumbRect.left && PtInRect(&g_thumbRect, point);
+        if (index != g_hover || scrollHot != g_scrollHot) {
+            g_hover = index;
+            g_scrollHot = scrollHot;
+            TRACKMOUSEEVENT track{};
+            track.cbSize = sizeof(track);
+            track.dwFlags = TME_LEAVE;
+            track.hwndTrack = hwnd;
+            TrackMouseEvent(&track);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        if (g_hover != -1 || g_scrollHot) {
+            g_hover = -1;
+            g_scrollHot = false;
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+
+    case WM_MOUSEWHEEL: {
+        int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+        g_scroll -= (delta / WHEEL_DELTA) * RowH() * 3;
+        ClampScroll();
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+
+    case WM_KEYDOWN: {
+        int count = static_cast<int>(g_cfg.rules.size());
+        if (count == 0) return 0;
+
+        switch (wParam) {
+        case VK_UP:
+            SelectRule(std::max(0, g_sel - 1));
+            return 0;
+        case VK_DOWN:
+            SelectRule(g_sel < 0 ? 0 : std::min(count - 1, g_sel + 1));
+            return 0;
+        case VK_HOME:
+            SelectRule(0);
+            return 0;
+        case VK_END:
+            SelectRule(count - 1);
+            return 0;
+        case VK_SPACE:
+            if (g_sel >= 0) OnListToggle(g_sel);
+            return 0;
+        case VK_RETURN:
+            if (g_sel >= 0) OnListActivate();
+            return 0;
+        case VK_DELETE:
+            if (g_sel >= 0) DeleteSelectedRule();
+            return 0;
+        default:
+            break;
+        }
+        return 0;
+    }
+
+    case WM_GETDLGCODE:
+        return DLGC_WANTARROWS | DLGC_WANTCHARS;
+
+    default:
+        break;
+    }
+
+    return DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
 LRESULT CALLBACK MainProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam) {
@@ -519,63 +921,19 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         return 0;
 
     case WM_SIZE:
-        LayoutMain(hwnd);
+        LayoutMain();
         return 0;
 
     case WM_GETMINMAXINFO: {
         auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
-        info->ptMinTrackSize.x = S(800);
-        info->ptMinTrackSize.y = S(520);
+        info->ptMinTrackSize.x = theme::S(780);
+        info->ptMinTrackSize.y = theme::S(480);
         return 0;
     }
 
-    case WM_CTLCOLORSTATIC: {
-        HDC dc = reinterpret_cast<HDC>(wParam);
-        HWND control = reinterpret_cast<HWND>(lParam);
-        SetBkColor(dc, RGB(255, 255, 255));
-        SetBkMode(dc, TRANSPARENT);
-        if (control == g_status) {
-            COLORREF color = RGB(107, 114, 128);
-            if (g_cfg.enabled && g_engineOk && g_invalid == 0) color = RGB(21, 128, 61);
-            else if (g_cfg.enabled && g_invalid > 0) color = RGB(180, 83, 9);
-            SetTextColor(dc, color);
-        } else if (control == g_subtitle) {
-            SetTextColor(dc, RGB(107, 114, 128));
-        } else {
-            SetTextColor(dc, RGB(17, 24, 39));
-        }
-        return reinterpret_cast<LRESULT>(g_white);
-    }
-
-    case WM_CTLCOLORBTN: {
-        HDC dc = reinterpret_cast<HDC>(wParam);
-        SetBkColor(dc, RGB(255, 255, 255));
-        return reinterpret_cast<LRESULT>(g_white);
-    }
-
-    case WM_PAINT: {
-        PAINTSTRUCT ps{};
-        HDC dc = BeginPaint(hwnd, &ps);
-        RECT client{};
-        GetClientRect(hwnd, &client);
-
-        HBRUSH accent = CreateSolidBrush(RGB(37, 99, 235));
-        RECT bar{S(20), S(16), S(24), S(52)};
-        FillRect(dc, &bar, accent);
-        DeleteObject(accent);
-
-        HPEN pen = CreatePen(PS_SOLID, 1, RGB(229, 231, 235));
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        MoveToEx(dc, S(20), S(78), nullptr);
-        LineTo(dc, client.right - S(20), S(78));
-        MoveToEx(dc, S(20), client.bottom - S(60), nullptr);
-        LineTo(dc, client.right - S(20), client.bottom - S(60));
-        SelectObject(dc, oldPen);
-        DeleteObject(pen);
-
-        EndPaint(hwnd, &ps);
+    case WM_PAINT:
+        PaintMain(hwnd);
         return 0;
-    }
 
     case WM_COMMAND: {
         int id = LOWORD(wParam);
@@ -596,18 +954,11 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_OPENCFG:
             OpenConfigFolder();
             return 0;
-        case IDC_HIDE:
-            HideToTray();
-            return 0;
         case IDC_MASTER:
-            if (notification == BN_CLICKED) {
-                SetMasterEnabled(SendMessageW(g_master, BM_GETCHECK, 0, 0) == BST_CHECKED);
-            }
+            if (notification == BN_CLICKED) SetMasterEnabled(ui::SwitchOn(g_master));
             return 0;
         case IDC_STARTUP:
-            if (notification == BN_CLICKED) {
-                SetStartupEnabled(SendMessageW(g_startup, BM_GETCHECK, 0, 0) == BST_CHECKED);
-            }
+            if (notification == BN_CLICKED) SetStartupEnabled(ui::SwitchOn(g_startup));
             return 0;
         case IDM_SHOW:
             ShowMain();
@@ -617,6 +968,9 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             return 0;
         case IDM_STARTUP:
             SetStartupEnabled(!g_cfg.runAtStartup);
+            return 0;
+        case IDM_CONFIGFOLDER:
+            OpenConfigFolder();
             return 0;
         case IDM_CONFIG:
             OpenConfigFile();
@@ -629,38 +983,6 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
             return 0;
         default:
             break;
-        }
-        break;
-    }
-
-    case WM_NOTIFY: {
-        auto* headerInfo = reinterpret_cast<NMHDR*>(lParam);
-        if (headerInfo->idFrom != IDC_LIST) break;
-
-        if (headerInfo->code == LVN_ITEMCHANGED) {
-            auto* listInfo = reinterpret_cast<NMLISTVIEW*>(lParam);
-            UpdateSelectionButtons();
-            if (!g_updating && listInfo->iItem >= 0 &&
-                listInfo->iItem < static_cast<int>(g_cfg.rules.size())) {
-                bool checked = ListView_GetCheckState(g_list, listInfo->iItem) != FALSE;
-                Rule& rule = g_cfg.rules[static_cast<size_t>(listInfo->iItem)];
-                if (rule.enabled != checked) {
-                    rule.enabled = checked;
-                    PersistConfig();
-                    ApplyEngine();
-                }
-            }
-            return 0;
-        }
-        if (headerInfo->code == NM_DBLCLK) {
-            EditSelectedRule();
-            return 0;
-        }
-        if (headerInfo->code == LVN_KEYDOWN) {
-            auto* keyInfo = reinterpret_cast<NMLVKEYDOWN*>(lParam);
-            if (keyInfo->wVKey == VK_DELETE) DeleteSelectedRule();
-            else if (keyInfo->wVKey == VK_RETURN) EditSelectedRule();
-            return 0;
         }
         break;
     }
@@ -704,9 +1026,10 @@ int RunApp(HINSTANCE instance, int showCmd, bool startHidden) {
     g_instance = instance;
 
     HDC screen = GetDC(nullptr);
-    g_dpi = static_cast<UINT>(GetDeviceCaps(screen, LOGPIXELSX));
+    UINT dpi = static_cast<UINT>(GetDeviceCaps(screen, LOGPIXELSX));
     ReleaseDC(nullptr, screen);
-    if (g_dpi == 0) g_dpi = 96;
+    if (dpi == 0) dpi = 96;
+    theme::SetDpi(dpi);
 
     bool existed = g_cfg.Load();
     if (!existed) {
@@ -718,13 +1041,28 @@ int RunApp(HINSTANCE instance, int showCmd, bool startHidden) {
 
     INITCOMMONCONTROLSEX controls{};
     controls.dwSize = sizeof(controls);
-    controls.dwICC = ICC_LISTVIEW_CLASSES | ICC_STANDARD_CLASSES;
+    controls.dwICC = ICC_STANDARD_CLASSES;
     InitCommonControlsEx(&controls);
 
-    g_white = CreateSolidBrush(RGB(255, 255, 255));
+    ui::RegisterControls(instance);
+
+    WNDCLASSEXW listClass{};
+    listClass.cbSize = sizeof(listClass);
+    listClass.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;
+    listClass.lpfnWndProc = ListProc;
+    listClass.hInstance = instance;
+    listClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    listClass.hbrBackground = nullptr;
+    listClass.lpszClassName = kListClass;
+    if (!RegisterClassExW(&listClass)) {
+        Engine::Instance().Stop();
+        return 1;
+    }
 
     g_invalid = Engine::Instance().Reload(g_cfg, g_cfg.enabled);
     g_engineOk = Engine::Instance().Start();
+
+    HBRUSH background = CreateSolidBrush(theme::kBg);
 
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
@@ -738,15 +1076,16 @@ int RunApp(HINSTANCE instance, int showCmd, bool startHidden) {
                                                        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON),
                                                        LR_DEFAULTCOLOR));
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    windowClass.hbrBackground = g_white;
+    windowClass.hbrBackground = background;
     windowClass.lpszClassName = kWindowClass;
 
     if (!RegisterClassExW(&windowClass)) {
+        DeleteObject(background);
         Engine::Instance().Stop();
         return 1;
     }
 
-    RECT windowRect{0, 0, S(900), S(580)};
+    RECT windowRect{0, 0, theme::S(900), theme::S(580)};
     AdjustWindowRectEx(&windowRect, WS_OVERLAPPEDWINDOW, FALSE, 0);
     int windowWidth = windowRect.right - windowRect.left;
     int windowHeight = windowRect.bottom - windowRect.top;
@@ -760,9 +1099,10 @@ int RunApp(HINSTANCE instance, int showCmd, bool startHidden) {
     int x = work.left + (workWidth - windowWidth) / 2;
     int y = work.top + (workHeight - windowHeight) / 2;
 
-    g_hwnd = CreateWindowExW(0, kWindowClass, L"KeyShorts", WS_OVERLAPPEDWINDOW,
+    g_hwnd = CreateWindowExW(0, kWindowClass, L"KeyShorts", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              x, y, windowWidth, windowHeight, nullptr, nullptr, instance, nullptr);
     if (!g_hwnd) {
+        DeleteObject(background);
         Engine::Instance().Stop();
         return 1;
     }
@@ -785,17 +1125,14 @@ int RunApp(HINSTANCE instance, int showCmd, bool startHidden) {
 
     MSG msg{};
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (IsDialogMessageW(g_hwnd, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
 
     Engine::Instance().Stop();
-    if (g_font) DeleteObject(g_font);
-    if (g_fontBold) DeleteObject(g_fontBold);
-    if (g_fontTitle) DeleteObject(g_fontTitle);
-    if (g_fontList) DeleteObject(g_fontList);
-    if (g_fontListBold) DeleteObject(g_fontListBold);
-    if (g_white) DeleteObject(g_white);
+    theme::Shutdown();
+    DeleteObject(background);
 
     return static_cast<int>(msg.wParam);
 }
