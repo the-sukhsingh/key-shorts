@@ -10,3 +10,4 @@ out/
 *.lib
 *.log
 *.exe
+.agents/

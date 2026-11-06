@@ -22,7 +22,7 @@ foreach ($s in $sizes) {
     $bgPath.AddArc($pad + $w - $d, $pad + $h - $d, $d, $d, 0, 90)
     $bgPath.AddArc($pad, $pad + $h - $d, $d, $d, 90, 90)
     $bgPath.CloseFigure()
-    $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 17, 24, 39))
+    $bgBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 17, 20, 28))
     $g.FillPath($bgBrush, $bgPath)
 
     $kx = [float]($s * 0.19)
@@ -37,10 +37,10 @@ foreach ($s in $sizes) {
     $keyPath.AddArc($kx + $kw - $dk, $ky + $kh - $dk, $dk, $dk, 0, 90)
     $keyPath.AddArc($kx, $ky + $kh - $dk, $dk, $dk, 90, 90)
     $keyPath.CloseFigure()
-    $white = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 248, 250, 252))
+    $white = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 238, 240, 245))
     $g.FillPath($white, $keyPath)
 
-    $accent = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 37, 99, 235))
+    $accent = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 76, 195, 138))
     $barH = [float][Math]::Max(1.0, $s * 0.075)
     $g.FillRectangle($accent, [float]($kx + $kw * 0.16), [float]($ky + $kh - $barH - $s * 0.09), [float]($kw * 0.68), $barH)
 
@@ -49,7 +49,7 @@ foreach ($s in $sizes) {
         $fmt = New-Object System.Drawing.StringFormat
         $fmt.Alignment = [System.Drawing.StringAlignment]::Center
         $fmt.LineAlignment = [System.Drawing.StringAlignment]::Center
-        $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 17, 24, 39))
+        $textBrush = New-Object System.Drawing.SolidBrush([System.Drawing.Color]::FromArgb(255, 11, 13, 20))
         $rect = New-Object System.Drawing.RectangleF([float]$kx, [float]($ky - $s * 0.02), [float]$kw, [float]($kh - $s * 0.06))
         $g.DrawString("K", $font, $textBrush, $rect, $fmt)
         $font.Dispose(); $fmt.Dispose(); $textBrush.Dispose()
