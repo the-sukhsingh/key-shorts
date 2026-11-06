@@ -100,6 +100,7 @@ bool Config::Load() {
             else if (key == L"enabled") current->enabled = ParseBool(value, current->enabled);
             else if (key == L"swallow") current->swallow = ParseBool(value, current->swallow);
             else if (key == L"repeat") current->repeat = ParseBool(value, current->repeat);
+            else if (key == L"focus_existing") current->focusExisting = ParseBool(value, current->focusExisting);
             else if (key == L"type") current->type = ParseType(value, current->type);
             else if (key == L"trigger") current->trigger = value;
             else if (key == L"target") current->target = value;
@@ -134,6 +135,7 @@ bool Config::Save() const {
         out += L"app=" + EscapeValue(rule.app) + L"\r\n";
         out += L"swallow=" + BoolText(rule.swallow) + L"\r\n";
         out += L"repeat=" + BoolText(rule.repeat) + L"\r\n";
+        out += L"focus_existing=" + BoolText(rule.focusExisting) + L"\r\n";
     }
 
     if (!EnsureDir(AppDataDir())) return false;

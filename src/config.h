@@ -19,6 +19,7 @@ struct Rule {
     bool enabled = true;
     bool swallow = true;
     bool repeat = false;
+    bool focusExisting = false;
     int type = RT_LAUNCH;
     std::wstring trigger;
     std::wstring target;
