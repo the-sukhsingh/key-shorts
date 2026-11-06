@@ -5,6 +5,8 @@ add_executable(KeyShorts WIN32
     src/main.cpp
     src/ui.cpp
     src/ui_rule.cpp
+    src/controls.cpp
+    src/theme.cpp
     src/engine.cpp
     src/config.cpp
     src/keys.cpp
@@ -22,7 +24,7 @@ target_compile_definitions(KeyShorts PRIVATE
     _CRT_SECURE_NO_WARNINGS
 )
 
-target_link_libraries(KeyShorts PRIVATE comctl32 comdlg32 shell32 advapi32 ole32 oleaut32 uuid shlwapi)
+target_link_libraries(KeyShorts PRIVATE comctl32 comdlg32 shell32 advapi32 ole32 oleaut32 uuid shlwapi dwmapi gdiplus)
 
 if(MSVC)
     target_compile_options(KeyShorts PRIVATE /W4 /O1 /GS- /Gy /Gw /utf-8 /permissive-)

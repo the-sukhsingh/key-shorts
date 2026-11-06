@@ -4,6 +4,8 @@
 #include "resource.h"
 #include "ui.h"
 
+#include <objidl.h>
+#include <gdiplus.h>
 #include <shellapi.h>
 #include <cwchar>
 
@@ -53,7 +55,13 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, LPWSTR, int showCmd) {
         return 0;
     }
 
+    Gdiplus::GdiplusStartupInput gdiplusInput;
+    ULONG_PTR gdiplusToken = 0;
+    Gdiplus::GdiplusStartup(&gdiplusToken, &gdiplusInput, nullptr);
+
     int result = RunApp(instance, showCmd, startHidden);
+
+    Gdiplus::GdiplusShutdown(gdiplusToken);
     if (mutex) CloseHandle(mutex);
     return result;
 }
