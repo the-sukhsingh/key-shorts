@@ -32,6 +32,7 @@ private:
         int scope = RS_GLOBAL;
         bool swallow = true;
         bool repeat = false;
+        bool focusExisting = false;
         KeyCombo trigger;
         KeyCombo out;
     };
@@ -40,6 +41,7 @@ private:
         int type = RT_LAUNCH;
         std::wstring target;
         std::wstring args;
+        bool focusExisting = false;
     };
 
     struct RepeatState {

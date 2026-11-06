@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <shellapi.h>
+#include <dwmapi.h>
 #include <objbase.h>
 #include <oleauto.h>
 #include <exdisp.h>
@@ -182,6 +183,103 @@ std::wstring LaunchDirectory() {
     return HomeDirectory();
 }
 
+bool IsCloakedWindow(HWND hwnd) {
+    int cloaked = 0;
+    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked)))) {
+        return cloaked != 0;
+    }
+    return false;
+}
+
+std::wstring ProcessImageName(DWORD pid) {
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!process) return {};
+
+    wchar_t path[1024] = {};
+    DWORD size = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    std::wstring name;
+    if (QueryFullProcessImageNameW(process, 0, path, &size)) {
+        name = FileNameOf(std::wstring(path, size));
+    }
+    CloseHandle(process);
+    return name;
+}
+
+struct AppWindow {
+    HWND hwnd;
+    int z;
+};
+
+struct AppWindowSearch {
+    const std::wstring* exe = nullptr;
+    std::vector<AppWindow> windows;
+    int z = 0;
+};
+
+BOOL CALLBACK CollectAppWindowsProc(HWND hwnd, LPARAM param) {
+    auto* search = reinterpret_cast<AppWindowSearch*>(param);
+    int z = search->z++;
+    if (!IsWindowVisible(hwnd) || GetWindowTextLengthW(hwnd) == 0) return TRUE;
+    if (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) return TRUE;
+    if (IsCloakedWindow(hwnd)) return TRUE;
+
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return TRUE;
+    if (!EqualsI(ProcessImageName(pid), *search->exe)) return TRUE;
+
+    search->windows.push_back({hwnd, z});
+    return TRUE;
+}
+
+void ActivateWindow(HWND hwnd) {
+    if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+
+    HWND foreground = GetForegroundWindow();
+    DWORD foregroundThread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+    DWORD targetThread = GetWindowThreadProcessId(hwnd, nullptr);
+    bool attached = foregroundThread && targetThread && foregroundThread != targetThread &&
+                    AttachThreadInput(foregroundThread, targetThread, TRUE) != FALSE;
+
+    SetForegroundWindow(hwnd);
+    BringWindowToTop(hwnd);
+    if (attached) AttachThreadInput(foregroundThread, targetThread, FALSE);
+}
+
+// Brings up the next window of an app that is already running. Returns false
+// when the app has no open windows so the caller can launch it instead.
+bool FocusExistingWindow(const std::wstring& target) {
+    std::wstring exe = FileNameOf(target);
+    if (exe.empty()) return false;
+    if (GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
+
+    AppWindowSearch search;
+    search.exe = &exe;
+    EnumWindows(CollectAppWindowsProc, reinterpret_cast<LPARAM>(&search));
+    if (search.windows.empty()) return false;
+
+    // Cycle in creation order. The z-order changes as windows are raised, so
+    // walking it would just bounce between the two most recent windows.
+    std::vector<HWND> ordered;
+    ordered.reserve(search.windows.size());
+    for (const AppWindow& window : search.windows) ordered.push_back(window.hwnd);
+    std::sort(ordered.begin(), ordered.end(), [](HWND a, HWND b) {
+        return reinterpret_cast<ULONG_PTR>(a) < reinterpret_cast<ULONG_PTR>(b);
+    });
+
+    HWND foreground = GetAncestor(GetForegroundWindow(), GA_ROOT);
+    auto current = std::find(ordered.begin(), ordered.end(), foreground);
+    if (current == ordered.end()) {
+        // Coming from another app: show the most recently used window first.
+        ActivateWindow(search.windows.front().hwnd);
+        return true;
+    }
+
+    size_t next = static_cast<size_t>(current - ordered.begin() + 1) % ordered.size();
+    ActivateWindow(ordered[next]);
+    return true;
+}
+
 } // namespace
 
 Engine& Engine::Instance() {
@@ -277,6 +375,7 @@ int Engine::Reload(const Config& config, bool enabled) {
         entry.scope = rule.scope;
         entry.swallow = rule.swallow;
         entry.repeat = rule.repeat;
+        entry.focusExisting = rule.focusExisting;
         entry.trigger = trigger;
 
         if (rule.type == RT_REMAP) {
@@ -320,6 +419,7 @@ void Engine::EnqueueAction(const CompiledRule& rule) {
     job.type = rule.type;
     job.target = rule.target;
     job.args = rule.args;
+    job.focusExisting = rule.focusExisting;
     EnqueueJob(job);
 }
 
@@ -338,6 +438,7 @@ void Engine::StartRepeat(int vk, const CompiledRule& rule) {
     state.job.type = rule.type;
     state.job.target = rule.target;
     state.job.args = rule.args;
+    state.job.focusExisting = rule.focusExisting;
     if (SetTimer(nullptr, kRepeatTimerBase + static_cast<UINT_PTR>(vk), 100, &Engine::RepeatTimerProc) == 0) {
         state.active = false;
     }
@@ -546,6 +647,7 @@ void Engine::RunJob(const Job& job) {
         std::wstring target = ExpandEnv(job.target);
         std::wstring args = ExpandEnv(job.args);
         if (target.empty()) return;
+        if (job.focusExisting && FocusExistingWindow(target)) break;
         std::wstring directory = LaunchDirectory();
         ShellExecuteW(nullptr, L"open", target.c_str(), args.empty() ? nullptr : args.c_str(),
                       directory.empty() ? nullptr : directory.c_str(), SW_SHOWNORMAL);
