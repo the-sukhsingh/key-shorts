@@ -7,6 +7,7 @@ Built with pure Win32 and a low-level keyboard hook so it stays out of the way: 
 ## Features
 
 - **Global shortcuts** that can launch a program, run a command, or type a key sequence.
+- **Reuse open windows** - a launch rule can bring up the app's existing windows and cycle through them on each press instead of starting a new instance.
 - **Per-app scopes** - a rule can apply everywhere or only while a specific `exe` is focused.
 - **Key remapping** - turn any key into any other key or key combination (hold-through, so modifiers work).
 - **Macros** - send text and special keys with `{WAIT}`, `{CTRL DOWN}`, and similar tokens.
@@ -37,7 +38,7 @@ cmake --build build --config Release
 1. Run `KeyShorts.exe`. It opens the rule manager and stays in the tray when closed.
 2. Press **+ Add rule**, then **Set...** next to Trigger and press the key combination you want.
 3. Choose an action:
-   - **Launch program** - target is an exe or a URL (opened with `ShellExecute`).
+   - **Launch program** - target is an exe or a URL (opened with `ShellExecute`). Tick **Reuse open windows (cycle)** to focus the app's existing windows and cycle through them instead of opening a new one.
    - **Run command** - target is passed to `cmd.exe /c`.
    - **Send keys** - a macro such as `Hello{ENTER}` or `{CTRL}c`.
    - **Remap key** - target is a key or combo such as `Esc` or `Ctrl+C`.
@@ -90,9 +91,12 @@ scope=global
 app=
 swallow=1
 repeat=0
+focus_existing=0
 ```
 
 `type` is one of `launch`, `command`, `sendkeys`, `remap`. Scoped rules always win over global rules with the same trigger.
+
+`focus_existing=1` (launch only) makes the shortcut reuse the program's open windows: the first press brings up the most recent one, further presses cycle through the rest, and a new instance is only started when none are open. Windows are matched by the executable's file name, so give the full path to the exe (or a path that resolves to it).
 
 `launch` and `command` rules start in the active File Explorer folder, falling back to your home folder when no folder is open.
 
