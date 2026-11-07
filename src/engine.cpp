@@ -10,6 +10,7 @@
 #include <knownfolders.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <shobjidl.h>
 #include <cwchar>
 #include <cwctype>
 #include <cstdlib>
@@ -191,6 +192,45 @@ bool IsCloakedWindow(HWND hwnd) {
     return false;
 }
 
+std::wstring ProcessImageName(DWORD pid);
+
+BOOL CALLBACK SpotifyPlayPauseProc(HWND hwnd, LPARAM) {
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return TRUE;
+    if (!EqualsI(ProcessImageName(pid), L"Spotify.exe")) return TRUE;
+    LRESULT r = SendMessageW(hwnd, WM_APPCOMMAND, 0, MAKELPARAM(0, APPCOMMAND_MEDIA_PLAY_PAUSE));
+    FILE* log = _wfopen(L"C:\\\\Users\\\\sukha\\\\AppData\\\\Local\\\\Temp\\\\opencode\\\\ks.log", L"a");
+    if (log) { fwprintf(log, L"Spotify toggle hwnd=%p pid=%lu rc=%lld\n", (void*)hwnd, (unsigned long)pid, (long long)r); fclose(log); }
+    return FALSE;
+}
+
+void ToggleSpotify() {
+    EnumWindows(&SpotifyPlayPauseProc, 0);
+}
+
+bool IsOnCurrentDesktop(HWND hwnd) {
+    HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    bool uninit = (init == S_OK || init == S_FALSE);
+    bool result = true;
+    IVirtualDesktopManager* manager = nullptr;
+    const CLSID clsidVirtualDesktopManager = {
+        0xaa509086, 0x5ca9, 0x4c25, {0x8f, 0x95, 0x58, 0x9d, 0x3c, 0x07, 0xb4, 0x8a}
+    };
+    HRESULT hr = CoCreateInstance(clsidVirtualDesktopManager, nullptr, CLSCTX_ALL,
+                                  __uuidof(IVirtualDesktopManager), reinterpret_cast<void**>(&manager));
+    if (SUCCEEDED(hr) && manager) {
+        BOOL onCurrent = FALSE;
+        if (SUCCEEDED(manager->IsWindowOnCurrentVirtualDesktop(hwnd, &onCurrent))) {
+            result = (onCurrent == TRUE);
+        }
+        manager->Release();
+    }
+    if (uninit) CoUninitialize();
+    return result;
+}
+
 std::wstring ProcessImageName(DWORD pid) {
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
     if (!process) return {};
@@ -248,14 +288,20 @@ void ActivateWindow(HWND hwnd) {
 
 // Brings up the next window of an app that is already running. Returns false
 // when the app has no open windows so the caller can launch it instead.
-bool FocusExistingWindow(const std::wstring& target) {
+bool FocusExistingWindow(const std::wstring& target, bool allowCrossDesktop) {
     std::wstring exe = FileNameOf(target);
     if (exe.empty()) return false;
-    if (GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES) return false;
 
     AppWindowSearch search;
     search.exe = &exe;
     EnumWindows(CollectAppWindowsProc, reinterpret_cast<LPARAM>(&search));
+    if (!allowCrossDesktop && !search.windows.empty()) {
+        std::vector<AppWindow> current;
+        for (const AppWindow& window : search.windows) {
+            if (IsOnCurrentDesktop(window.hwnd)) current.push_back(window);
+        }
+        search.windows.swap(current);
+    }
     if (search.windows.empty()) return false;
 
     // Cycle in creation order. The z-order changes as windows are raised, so
@@ -376,6 +422,7 @@ int Engine::Reload(const Config& config, bool enabled) {
         entry.swallow = rule.swallow;
         entry.repeat = rule.repeat;
         entry.focusExisting = rule.focusExisting;
+        entry.reuseAcrossDesktops = rule.reuseAcrossDesktops;
         entry.trigger = trigger;
 
         if (rule.type == RT_REMAP) {
@@ -383,7 +430,7 @@ int Engine::Reload(const Config& config, bool enabled) {
                 ++invalid;
                 continue;
             }
-        } else if (Trim(rule.target).empty()) {
+        } else if (rule.type != RT_SPOTIFY && Trim(rule.target).empty()) {
             ++invalid;
             continue;
         }
@@ -420,6 +467,7 @@ void Engine::EnqueueAction(const CompiledRule& rule) {
     job.target = rule.target;
     job.args = rule.args;
     job.focusExisting = rule.focusExisting;
+    job.reuseAcrossDesktops = rule.reuseAcrossDesktops;
     EnqueueJob(job);
 }
 
@@ -439,6 +487,7 @@ void Engine::StartRepeat(int vk, const CompiledRule& rule) {
     state.job.target = rule.target;
     state.job.args = rule.args;
     state.job.focusExisting = rule.focusExisting;
+    state.job.reuseAcrossDesktops = rule.reuseAcrossDesktops;
     if (SetTimer(nullptr, kRepeatTimerBase + static_cast<UINT_PTR>(vk), 100, &Engine::RepeatTimerProc) == 0) {
         state.active = false;
     }
@@ -647,7 +696,10 @@ void Engine::RunJob(const Job& job) {
         std::wstring target = ExpandEnv(job.target);
         std::wstring args = ExpandEnv(job.args);
         if (target.empty()) return;
-        if (job.focusExisting && FocusExistingWindow(target)) break;
+        if (job.focusExisting) {
+            bool reused = FocusExistingWindow(target, job.reuseAcrossDesktops);
+            if (reused) break;
+        }
         std::wstring directory = LaunchDirectory();
         ShellExecuteW(nullptr, L"open", target.c_str(), args.empty() ? nullptr : args.c_str(),
                       directory.empty() ? nullptr : directory.c_str(), SW_SHOWNORMAL);
@@ -668,6 +720,9 @@ void Engine::RunJob(const Job& job) {
     }
     case RT_SENDKEYS:
         RunMacro(job.target);
+        break;
+    case RT_SPOTIFY:
+        ToggleSpotify();
         break;
     default:
         break;

@@ -25,6 +25,7 @@ int ParseType(const std::wstring& value, int fallback) {
     if (v == L"launch") return RT_LAUNCH;
     if (v == L"command") return RT_COMMAND;
     if (v == L"sendkeys") return RT_SENDKEYS;
+    if (v == L"spotify") return RT_SPOTIFY;
     int n = ParseInt(v, -1);
     if (n >= RT_REMAP && n <= RT_SENDKEYS) return n;
     return fallback;
@@ -51,6 +52,7 @@ const wchar_t* RuleTypeLabel(int type) {
     case RT_LAUNCH: return L"Launch program";
     case RT_COMMAND: return L"Run command";
     case RT_SENDKEYS: return L"Send keys (macro)";
+    case RT_SPOTIFY: return L"Spotify play/pause";
     default: return L"Launch program";
     }
 }
@@ -61,6 +63,7 @@ const wchar_t* RuleTypeKey(int type) {
     case RT_LAUNCH: return L"launch";
     case RT_COMMAND: return L"command";
     case RT_SENDKEYS: return L"sendkeys";
+    case RT_SPOTIFY: return L"spotify";
     default: return L"launch";
     }
 }
@@ -101,6 +104,7 @@ bool Config::Load() {
             else if (key == L"swallow") current->swallow = ParseBool(value, current->swallow);
             else if (key == L"repeat") current->repeat = ParseBool(value, current->repeat);
             else if (key == L"focus_existing") current->focusExisting = ParseBool(value, current->focusExisting);
+            else if (key == L"reuse_across_desktops") current->reuseAcrossDesktops = ParseBool(value, current->reuseAcrossDesktops);
             else if (key == L"type") current->type = ParseType(value, current->type);
             else if (key == L"trigger") current->trigger = value;
             else if (key == L"target") current->target = value;
@@ -136,6 +140,7 @@ bool Config::Save() const {
         out += L"swallow=" + BoolText(rule.swallow) + L"\r\n";
         out += L"repeat=" + BoolText(rule.repeat) + L"\r\n";
         out += L"focus_existing=" + BoolText(rule.focusExisting) + L"\r\n";
+        out += L"reuse_across_desktops=" + BoolText(rule.reuseAcrossDesktops) + L"\r\n";
     }
 
     if (!EnsureDir(AppDataDir())) return false;

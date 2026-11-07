@@ -35,6 +35,7 @@
 #define IDC_REPEAT       1115
 #define IDC_HINT         1116
 #define IDC_REUSE        1117
+#define IDC_CROSSDESKTOP 1118
 
 // Tray menu commands
 #define IDM_SHOW       2001

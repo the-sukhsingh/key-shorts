@@ -7,6 +7,7 @@ enum RuleType : int {
     RT_LAUNCH = 1,
     RT_COMMAND = 2,
     RT_SENDKEYS = 3,
+    RT_SPOTIFY = 4,
 };
 
 enum RuleScope : int {
@@ -20,6 +21,7 @@ struct Rule {
     bool swallow = true;
     bool repeat = false;
     bool focusExisting = false;
+    bool reuseAcrossDesktops = true;
     int type = RT_LAUNCH;
     std::wstring trigger;
     std::wstring target;

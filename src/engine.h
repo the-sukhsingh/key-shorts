@@ -33,6 +33,7 @@ private:
         bool swallow = true;
         bool repeat = false;
         bool focusExisting = false;
+        bool reuseAcrossDesktops = true;
         KeyCombo trigger;
         KeyCombo out;
     };
@@ -42,6 +43,7 @@ private:
         std::wstring target;
         std::wstring args;
         bool focusExisting = false;
+        bool reuseAcrossDesktops = true;
     };
 
     struct RepeatState {
