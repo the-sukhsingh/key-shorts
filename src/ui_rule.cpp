@@ -34,6 +34,7 @@ HWND g_scope = nullptr;
 HWND g_enabled = nullptr;
 HWND g_swallow = nullptr;
 HWND g_reuse = nullptr;
+HWND g_crossDesktop = nullptr;
 HWND g_repeat = nullptr;
 HWND g_save = nullptr;
 HWND g_cancel = nullptr;
@@ -42,7 +43,7 @@ HBRUSH g_wellBrush = nullptr;
 HBRUSH g_disabledBrush = nullptr;
 HBRUSH g_bgBrush = nullptr;
 
-constexpr int kTypes[] = {RT_REMAP, RT_LAUNCH, RT_COMMAND, RT_SENDKEYS};
+constexpr int kTypes[] = {RT_REMAP, RT_LAUNCH, RT_COMMAND, RT_SENDKEYS, RT_SPOTIFY};
 
 std::wstring GetControlText(HWND control) {
     int length = GetWindowTextLengthW(control);
@@ -93,7 +94,7 @@ void InvalidateWell(HWND dialog, const RECT& well) {
 
 int SelectedType() {
     int index = ui::SegmentIndex(g_type);
-    if (index < 0 || index >= 4) index = 1;
+    if (index < 0 || index >= 5) index = 1;
     return kTypes[index];
 }
 
@@ -135,6 +136,8 @@ std::wstring ContextHint() {
         return L"Reuse open windows cycles through the app's windows on each press.";
     case RT_SENDKEYS:
         return L"Repeat while held repeats the sequence while the trigger is held.";
+    case RT_SPOTIFY:
+        return L"Toggles Spotify play or pause wherever it is running.";
     default:
         return L"";
     }
@@ -150,12 +153,18 @@ void UpdateTypeFields(HWND dialog) {
     bool isRemap = type == RT_REMAP;
     bool isLaunch = type == RT_LAUNCH;
     bool isKeys = type == RT_SENDKEYS;
+    bool isSpotify = type == RT_SPOTIFY;
 
     ShowWindow(g_browse, isLaunch ? SW_SHOW : SW_HIDE);
     ShowWindow(g_setTarget, isRemap ? SW_SHOW : SW_HIDE);
     ShowWindow(g_args, isLaunch ? SW_SHOW : SW_HIDE);
     ShowWindow(g_reuse, isLaunch ? SW_SHOW : SW_HIDE);
     ShowWindow(g_repeat, isKeys ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_crossDesktop, isLaunch ? SW_SHOW : SW_HIDE);
+    ShowWindow(g_target, isSpotify ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_app, isSpotify ? SW_HIDE : SW_SHOW);
+    ShowWindow(g_scope, isSpotify ? SW_HIDE : SW_SHOW);
+    EnableWindow(g_crossDesktop, isLaunch && ui::CheckOn(g_reuse));
 
     EnableWindow(g_swallow, !isRemap);
     if (isRemap) ui::SetCheckOn(g_swallow, true);
@@ -308,16 +317,20 @@ void PaintDialog(HWND dialog) {
 
     label(S(152), L"Action");
 
-    label(S(196), TargetLabel());
-    well(TargetWell(), g_target);
+    if (SelectedType() != RT_SPOTIFY) {
+        label(S(196), TargetLabel());
+        well(TargetWell(), g_target);
+    }
 
     if (IsWindowVisible(g_args)) {
         label(S(240), L"Arguments");
         well(ArgsWell(), g_args);
     }
 
-    label(S(284), L"Applies to");
-    well(AppWell(), g_app);
+    if (SelectedType() != RT_SPOTIFY) {
+        label(S(284), L"Applies to");
+        well(AppWell(), g_app);
+    }
 
     theme::FillSolid(dc, RECT{margin, S(332), right, S(333)}, theme::kHairlineSoft);
     theme::FillSolid(dc, RECT{margin, S(436), right, S(437)}, theme::kHairlineSoft);
@@ -376,7 +389,7 @@ void SaveRule(HWND dialog) {
     }
     trigger = FormatCombo(triggerCombo);
 
-    if (target.empty()) {
+    if (target.empty() && type != RT_SPOTIFY) {
         MessageBoxW(dialog,
                     type == RT_REMAP ? L"Choose the key to map to." : L"Target cannot be empty.",
                     L"Invalid target", MB_ICONWARNING);
@@ -423,6 +436,7 @@ void SaveRule(HWND dialog) {
     rule.swallow = ui::CheckOn(g_swallow);
     rule.repeat = type == RT_SENDKEYS && ui::CheckOn(g_repeat);
     rule.focusExisting = type == RT_LAUNCH && ui::CheckOn(g_reuse);
+    rule.reuseAcrossDesktops = type == RT_LAUNCH && ui::CheckOn(g_crossDesktop);
 
     *g_editRule = rule;
     EndDialog(dialog, 1);
@@ -464,8 +478,8 @@ INT_PTR CALLBACK RuleDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM
         g_setTrigger = ui::Button(dialog, IDC_SET_TRIGGER, L"Set", nullptr,
                                   ui::ButtonStyle::Secondary, S(460), S(108), S(76), S(32));
         g_type = ui::Segments(dialog, IDC_TYPE,
-                              {L"Remap", L"Launch", L"Command", L"Send keys"}, S(120), S(152),
-                              S(416), S(32));
+                               {L"Remap", L"Launch", L"Command", L"Send keys", L"Spotify"}, S(120), S(152),
+                               S(416), S(32));
         g_target = MakeEdit(dialog, IDC_TARGET, theme::Font().body);
         g_browse = ui::Button(dialog, IDC_BROWSE, L"Browse", nullptr, ui::ButtonStyle::Secondary,
                               S(460), S(196), S(76), S(32));
@@ -480,6 +494,7 @@ INT_PTR CALLBACK RuleDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM
                               S(280), S(20));
         g_reuse = ui::Check(dialog, IDC_REUSE, L"Reuse open windows", S(24), S(376), S(260), S(20));
         g_repeat = ui::Check(dialog, IDC_REPEAT, L"Repeat while held", S(224), S(376), S(240), S(20));
+        g_crossDesktop = ui::Check(dialog, IDC_CROSSDESKTOP, L"Switch desktops when reusing", S(224), S(376), S(312), S(20));
         g_cancel = ui::Button(dialog, IDCANCEL, L"Cancel", nullptr, ui::ButtonStyle::Secondary,
                               S(352), S(448), S(88), S(36));
         g_save = ui::Button(dialog, IDOK, L"Save", nullptr, ui::ButtonStyle::Primary, S(448),
@@ -498,7 +513,7 @@ INT_PTR CALLBACK RuleDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM
         SetWindowTextW(g_app, g_editRule->app.c_str());
 
         int typeIndex = 1;
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             if (kTypes[i] == g_editRule->type) typeIndex = i;
         }
         ui::SetSegmentIndex(g_type, typeIndex);
@@ -507,6 +522,7 @@ INT_PTR CALLBACK RuleDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM
         ui::SetCheckOn(g_enabled, g_editRule->enabled);
         ui::SetCheckOn(g_swallow, g_editRule->swallow);
         ui::SetCheckOn(g_reuse, g_editRule->focusExisting);
+        ui::SetCheckOn(g_crossDesktop, g_editRule->reuseAcrossDesktops);
         ui::SetCheckOn(g_repeat, g_editRule->repeat);
 
         UpdateTypeFields(dialog);
@@ -556,6 +572,10 @@ INT_PTR CALLBACK RuleDialogProc(HWND dialog, UINT message, WPARAM wParam, LPARAM
         }
         if (id == IDC_BROWSE) {
             BrowseForProgram(dialog);
+            return TRUE;
+        }
+        if (id == IDC_REUSE && notification == BN_CLICKED) {
+            EnableWindow(g_crossDesktop, IsWindowVisible(g_crossDesktop) && ui::CheckOn(g_reuse));
             return TRUE;
         }
         if ((id == IDC_TYPE || id == IDC_SCOPE) && notification == CBN_SELCHANGE) {
