@@ -471,7 +471,7 @@ void PaintList(HDC dc, int width, int height) {
     RECT card{0, 0, width, height};
     theme::FillRound(dc, card, theme::S(12), theme::kCard);
 
-    HRGN clip = CreateRoundRectRgn(0, 0, width + 1, height + 1, theme::S(24), theme::S(24));
+    HRGN clip = CreateRoundRectRgn(0, 0, width + 1, height + 1, theme::S(12), theme::S(12));
     int saved = SaveDC(dc);
     SelectClipRgn(dc, clip);
 
@@ -613,7 +613,7 @@ void PaintMain(HWND hwnd) {
     RECT mark{margin, theme::S(16), margin + theme::S(28), theme::S(44)};
     theme::FillRound(dc, mark, theme::S(6), theme::kKeyEdge);
     RECT markInner{mark.left, mark.top, mark.right, mark.bottom - theme::S(2)};
-    theme::FillRound(dc, markInner, theme::S(6), theme::kKey);
+    theme::FillRound(dc, markInner, theme::S(4), theme::kKey);
     theme::DrawLabel(dc, L"K", markInner, theme::Font().monoBold, theme::kText,
                      DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 

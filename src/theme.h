@@ -5,27 +5,27 @@
 // Ink + signal green: a quiet, nocturnal instrument panel.
 namespace theme {
 
-inline constexpr COLORREF kBg = RGB(0x0B, 0x0D, 0x14);
-inline constexpr COLORREF kDeep = RGB(0x07, 0x08, 0x0D);
-inline constexpr COLORREF kCard = RGB(0x11, 0x14, 0x1C);
-inline constexpr COLORREF kRaised = RGB(0x1A, 0x1E, 0x28);
-inline constexpr COLORREF kRaisedHover = RGB(0x23, 0x29, 0x36);
-inline constexpr COLORREF kHairline = RGB(0x24, 0x2A, 0x38);
-inline constexpr COLORREF kHairlineSoft = RGB(0x1B, 0x1F, 0x2A);
-inline constexpr COLORREF kText = RGB(0xEE, 0xF0, 0xF5);
-inline constexpr COLORREF kTextSecondary = RGB(0xA3, 0xA9, 0xB8);
-inline constexpr COLORREF kTextMuted = RGB(0x7A, 0x82, 0x96);
-inline constexpr COLORREF kTextDisabled = RGB(0x56, 0x5D, 0x6E);
-inline constexpr COLORREF kAccent = RGB(0x4C, 0xC3, 0x8A);
-inline constexpr COLORREF kAccentHover = RGB(0x5B, 0xD4, 0x9A);
-inline constexpr COLORREF kAccentPressed = RGB(0x42, 0xB3, 0x7C);
-inline constexpr COLORREF kAccentInk = RGB(0x06, 0x13, 0x0C);
-inline constexpr COLORREF kDanger = RGB(0xE5, 0x48, 0x4D);
-inline constexpr COLORREF kKey = RGB(0x23, 0x29, 0x36);
-inline constexpr COLORREF kKeyEdge = RGB(0x07, 0x08, 0x0D);
-inline constexpr COLORREF kRowHover = RGB(0x18, 0x1D, 0x28);
-inline constexpr COLORREF kRowSelected = RGB(0x1E, 0x24, 0x31);
-inline constexpr COLORREF kSeparator = RGB(0x15, 0x18, 0x21);
+inline constexpr COLORREF kBg = RGB(0x0D, 0x11, 0x1A);
+inline constexpr COLORREF kDeep = RGB(0x08, 0x0A, 0x12);
+inline constexpr COLORREF kCard = RGB(0x13, 0x18, 0x24);
+inline constexpr COLORREF kRaised = RGB(0x1D, 0x23, 0x33);
+inline constexpr COLORREF kRaisedHover = RGB(0x26, 0x2F, 0x43);
+inline constexpr COLORREF kHairline = RGB(0x2A, 0x34, 0x4A);
+inline constexpr COLORREF kHairlineSoft = RGB(0x1E, 0x25, 0x36);
+inline constexpr COLORREF kText = RGB(0xEE, 0xF2, 0xF8);
+inline constexpr COLORREF kTextSecondary = RGB(0xA3, 0xAD, 0xC0);
+inline constexpr COLORREF kTextMuted = RGB(0x7A, 0x84, 0x99);
+inline constexpr COLORREF kTextDisabled = RGB(0x56, 0x5F, 0x72);
+inline constexpr COLORREF kAccent = RGB(0x5B, 0x8D, 0xEF);
+inline constexpr COLORREF kAccentHover = RGB(0x7A, 0xA6, 0xF5);
+inline constexpr COLORREF kAccentPressed = RGB(0x4A, 0x79, 0xD9);
+inline constexpr COLORREF kAccentInk = RGB(0x06, 0x0A, 0x14);
+inline constexpr COLORREF kDanger = RGB(0xEF, 0x5A, 0x65);
+inline constexpr COLORREF kKey = RGB(0x25, 0x2D, 0x40);
+inline constexpr COLORREF kKeyEdge = RGB(0x08, 0x0A, 0x12);
+inline constexpr COLORREF kRowHover = RGB(0x1A, 0x20, 0x30);
+inline constexpr COLORREF kRowSelected = RGB(0x20, 0x28, 0x3A);
+inline constexpr COLORREF kSeparator = RGB(0x16, 0x1B, 0x28);
 
 struct Fonts {
     HFONT body = nullptr;

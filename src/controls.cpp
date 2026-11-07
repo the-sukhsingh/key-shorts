@@ -236,12 +236,12 @@ void PaintSegments(HWND hwnd, SegmentData* data) {
         RECT segment{rc.left + pad + i * width, rc.top + pad, rc.left + pad + (i + 1) * width,
                      rc.bottom - pad};
         if (i == data->selected) {
-            theme::FillRound(dc, segment, theme::S(6), theme::kRaised);
+            theme::FillRound(dc, segment, theme::S(5), theme::kRaised);
             RECT bar{segment.left + theme::S(8), segment.bottom - theme::S(4),
                      segment.right - theme::S(8), segment.bottom - theme::S(2)};
             theme::FillRound(dc, bar, theme::S(1), theme::kAccent);
         } else if (i == data->hover) {
-            theme::FillRound(dc, segment, theme::S(6), theme::kRowHover);
+            theme::FillRound(dc, segment, theme::S(5), theme::kRowHover);
         }
 
         theme::DrawLabel(dc, data->items[static_cast<size_t>(i)], segment,
