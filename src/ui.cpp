@@ -555,10 +555,8 @@ void PaintList(HDC dc, int width, int height) {
         int cx = width / 2;
         int cy = header + (height - header) / 2;
         RECT key{cx - theme::S(28), cy - theme::S(92), cx + theme::S(28), cy - theme::S(36)};
-        theme::FillRound(dc, key, theme::S(12), theme::kKeyEdge);
-        RECT keyInner{key.left, key.top, key.right, key.bottom - theme::S(2)};
-        theme::FillRound(dc, keyInner, theme::S(12), theme::kKey);
-        theme::DrawGlyph(dc, keyInner, kGlyphKeyboard, theme::Font().icon, theme::kTextSecondary);
+        theme::FillRound(dc, key, theme::S(12), theme::kRaised);
+        theme::DrawGlyph(dc, key, kGlyphKeyboard, theme::Font().icon, theme::kTextMuted);
 
         theme::DrawLabel(dc, L"No rules yet",
                          RECT{cx - theme::S(220), cy - theme::S(22), cx + theme::S(220),
@@ -610,17 +608,10 @@ void PaintMain(HWND hwnd) {
 
     int margin = theme::S(24);
 
-    RECT mark{margin, theme::S(16), margin + theme::S(28), theme::S(44)};
-    theme::FillRound(dc, mark, theme::S(6), theme::kKeyEdge);
-    RECT markInner{mark.left, mark.top, mark.right, mark.bottom - theme::S(2)};
-    theme::FillRound(dc, markInner, theme::S(4), theme::kKey);
-    theme::DrawLabel(dc, L"K", markInner, theme::Font().monoBold, theme::kText,
-                     DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-
-    int textX = mark.right + theme::S(12);
+    int textX = margin;
     theme::DrawLabel(dc, L"KeyShorts",
-                     RECT{textX, theme::S(12), textX + theme::S(320), theme::S(34)},
-                     theme::Font().wordmark, theme::kText);
+                      RECT{textX, theme::S(12), textX + theme::S(320), theme::S(34)},
+                      theme::Font().wordmark, theme::kText);
 
     std::wstring status;
     COLORREF dotColor = theme::kAccent;
@@ -654,12 +645,6 @@ void PaintMain(HWND hwnd) {
                               margin + countSize.cx + theme::S(180), footerY + theme::S(18)},
                          theme::Font().mono, theme::kDanger);
     }
-
-    theme::DrawLabel(dc, L"Close this window to keep KeyShorts running in the tray",
-                     RECT{client.right - margin - theme::S(360), footerY, client.right - margin,
-                          footerY + theme::S(18)},
-                     theme::Font().meta, theme::kTextMuted,
-                     DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 
     EndPaint(hwnd, &ps);
 }

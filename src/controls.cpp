@@ -80,8 +80,8 @@ void PaintButton(HWND hwnd, ButtonData* data) {
     switch (data->style) {
     case ButtonStyle::Primary:
         fill = !enabled ? theme::kRaised
-                        : down ? theme::kAccentPressed : hot ? theme::kAccentHover : theme::kAccent;
-        textColor = enabled ? theme::kAccentInk : theme::kTextMuted;
+                        : down ? theme::kTextMuted : hot ? theme::kText : theme::kText;
+        textColor = enabled ? theme::kBg : theme::kTextMuted;
         break;
     case ButtonStyle::Secondary:
         fill = !enabled ? theme::kCard : down ? theme::kDeep : hot ? theme::kRaisedHover : theme::kRaised;
