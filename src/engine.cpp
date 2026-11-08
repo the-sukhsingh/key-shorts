@@ -18,6 +18,8 @@
 namespace {
 
 constexpr UINT_PTR kRepeatTimerBase = 0x1000;
+constexpr UINT_PTR kSpotifyTimerBase = 0x2000;
+constexpr DWORD kSpotifyDoubleMs = 350;
 
 // Reserved key code (VK_NONAME). No application reacts to it, but Windows
 // counts it as a key press when deciding whether the Win key was tapped alone.
@@ -210,6 +212,20 @@ void ToggleSpotify() {
     EnumWindows(&SpotifyPlayPauseProc, 0);
 }
 
+BOOL CALLBACK SpotifyNextProc(HWND hwnd, LPARAM) {
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return TRUE;
+    if (!EqualsI(ProcessImageName(pid), L"Spotify.exe")) return TRUE;
+    SendMessageW(hwnd, WM_APPCOMMAND, 0, MAKELPARAM(0, APPCOMMAND_MEDIA_NEXTTRACK));
+    return FALSE;
+}
+
+void NextSpotifyTrack() {
+    EnumWindows(&SpotifyNextProc, 0);
+}
+
 bool IsOnCurrentDesktop(HWND hwnd) {
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool uninit = (init == S_OK || init == S_FALSE);
@@ -395,6 +411,12 @@ void Engine::Stop() {
     if (worker_.joinable()) worker_.join();
 
     for (auto& repeat : repeats_) repeat.active = false;
+    for (int vk = 0; vk < 256; ++vk) {
+        if (spotifyPending_[vk].active) {
+            KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
+            spotifyPending_[vk].active = false;
+        }
+    }
     winShield_ = false;
     paused_.store(false);
 }
@@ -403,6 +425,13 @@ int Engine::Reload(const Config& config, bool enabled) {
     std::vector<CompiledRule> compiled;
     compiled.reserve(config.rules.size());
     int invalid = 0;
+
+    for (int vk = 0; vk < 256; ++vk) {
+        if (spotifyPending_[vk].active) {
+            KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
+            spotifyPending_[vk].active = false;
+        }
+    }
 
     for (const Rule& rule : config.rules) {
         if (!rule.enabled) continue;
@@ -653,8 +682,41 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
         return true;
     }
 
-    if (rule.repeat && rule.type == RT_SENDKEYS) StartRepeat(vk, rule);
-    EnqueueAction(rule);
+    if (rule.type == RT_SPOTIFY) {
+        DWORD now = GetTickCount();
+        SpotifyPending& pending = spotifyPending_[vk];
+        bool isDouble = pending.active && pending.vk == vk && pending.mods == mods &&
+                        (now - pending.started) <= kSpotifyDoubleMs;
+        if (isDouble) {
+            KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
+            Job nextJob = pending.job;
+            nextJob.type = RT_SPOTIFY;
+            nextJob.spotifyNext = true;
+            pending.active = false;
+            EnqueueJob(nextJob);
+        } else {
+            if (pending.active) {
+                KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
+                EnqueueJob(pending.job);
+                pending.active = false;
+            }
+            pending.active = true;
+            pending.started = now;
+            pending.vk = vk;
+            pending.mods = mods;
+            pending.job = Job{};
+            pending.job.type = RT_SPOTIFY;
+            pending.job.spotifyNext = false;
+            if (SetTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk),
+                         kSpotifyDoubleMs, &Engine::SpotifyTimerProc) == 0) {
+                pending.active = false;
+                EnqueueAction(rule);
+            }
+        }
+    } else {
+        if (rule.repeat && rule.type == RT_SENDKEYS) StartRepeat(vk, rule);
+        EnqueueAction(rule);
+    }
 
     if (rule.swallow) {
         swallowUp_[vk] = true;
@@ -722,7 +784,8 @@ void Engine::RunJob(const Job& job) {
         RunMacro(job.target);
         break;
     case RT_SPOTIFY:
-        ToggleSpotify();
+        if (job.spotifyNext) NextSpotifyTrack();
+        else ToggleSpotify();
         break;
     default:
         break;
@@ -883,4 +946,20 @@ void CALLBACK Engine::RepeatTimerProc(HWND, UINT, UINT_PTR id, DWORD) {
         return;
     }
     engine.EnqueueJob(engine.repeats_[vk].job);
+}
+
+void CALLBACK Engine::SpotifyTimerProc(HWND, UINT, UINT_PTR id, DWORD) {
+    Engine& engine = Instance();
+    if (!engine.enabled_.load()) return;
+
+    int vk = static_cast<int>(id - kSpotifyTimerBase);
+    if (vk < 0 || vk > 255) return;
+    SpotifyPending& pending = engine.spotifyPending_[vk];
+    if (!pending.active) {
+        KillTimer(nullptr, id);
+        return;
+    }
+    engine.EnqueueJob(pending.job);
+    pending.active = false;
+    KillTimer(nullptr, id);
 }

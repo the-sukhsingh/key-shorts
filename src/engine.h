@@ -44,6 +44,15 @@ private:
         std::wstring args;
         bool focusExisting = false;
         bool reuseAcrossDesktops = true;
+        bool spotifyNext = false;
+    };
+
+    struct SpotifyPending {
+        bool active = false;
+        DWORD started = 0;
+        int vk = 0;
+        UINT mods = 0;
+        Job job;
     };
 
     struct RepeatState {
@@ -59,6 +68,7 @@ private:
     static DWORD WINAPI ThreadProc(LPVOID param);
     static LRESULT CALLBACK HookProc(int code, WPARAM wParam, LPARAM lParam);
     static void CALLBACK RepeatTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
+    static void CALLBACK SpotifyTimerProc(HWND hwnd, UINT msg, UINT_PTR id, DWORD time);
 
     void ThreadMain();
     bool HandleKey(int msg, const KBDLLHOOKSTRUCT* info);
@@ -97,6 +107,7 @@ private:
     bool winShield_ = false;
     KeyCombo remapHold_[256];
     RepeatState repeats_[256];
+    SpotifyPending spotifyPending_[256]{};
 
     HWND fgWindow_ = nullptr;
     std::wstring fgApp_;
