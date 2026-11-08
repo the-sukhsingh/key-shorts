@@ -15,6 +15,7 @@ HHOOK g_captureHook = nullptr;
 bool g_captureActive = false;
 int g_captureMode = 0;
 UINT g_captureMods = 0;
+DWORD g_captureLCtrlTick = 0;
 HWND g_captureDialog = nullptr;
 wchar_t g_captureText[128] = {};
 
@@ -199,6 +200,11 @@ LRESULT CALLBACK CaptureProc(int code, WPARAM wParam, LPARAM lParam) {
 
     if (isDown) {
         if (mod != 0) {
+            if (vk == VK_LCONTROL) g_captureLCtrlTick = GetTickCount();
+            if (vk == VK_RMENU && g_captureLCtrlTick != 0 &&
+                GetTickCount() - g_captureLCtrlTick <= 100) {
+                g_captureMods &= ~KS_CTRL;
+            }
             g_captureMods |= mod;
             return 1;
         }

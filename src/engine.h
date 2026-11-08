@@ -106,6 +106,7 @@ private:
     // Set when a swallowed Win+key rule fires, so the Win key-up can be
     // preceded by a no-op key and Windows does not treat it as a lone tap.
     bool winShield_ = false;
+    DWORD lctrlDownTick_ = 0;
     KeyCombo remapHold_[256];
     RepeatState repeats_[256];
     SpotifyPending spotifyPending_[256]{};

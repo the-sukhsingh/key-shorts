@@ -659,6 +659,7 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
     }
 
     bool wasDown = down_[vk];
+    if (isDown && vk == VK_LCONTROL) lctrlDownTick_ = GetTickCount();
     down_[vk] = true;
 
     if (wasDown) {
@@ -673,6 +674,10 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
     if (!enabled_.load()) return false;
 
     UINT mods = CurrentMods();
+    if (vk == VK_RMENU && lctrlDownTick_ != 0 &&
+        GetTickCount() - lctrlDownTick_ <= 100) {
+        mods &= ~KS_CTRL;
+    }
     if (IsModifierVk(vk)) mods &= ~ModsFromVk(vk);
 
     CompiledRule rule;
