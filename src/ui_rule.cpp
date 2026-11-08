@@ -137,7 +137,7 @@ std::wstring ContextHint() {
     case RT_SENDKEYS:
         return L"Repeat while held repeats the sequence while the trigger is held.";
     case RT_SPOTIFY:
-        return L"Toggles Spotify play or pause. Press twice quickly to skip to the next track.";
+        return L"Toggles Spotify play/pause. Press twice quickly for next track, three times for previous.";
     default:
         return L"";
     }

@@ -44,7 +44,7 @@ private:
         std::wstring args;
         bool focusExisting = false;
         bool reuseAcrossDesktops = true;
-        bool spotifyNext = false;
+        int spotifyAction = 0; // 0 play/pause, 1 next track, 2 previous track
     };
 
     struct SpotifyPending {
@@ -52,6 +52,7 @@ private:
         DWORD started = 0;
         int vk = 0;
         UINT mods = 0;
+        int clicks = 0;
         Job job;
     };
 

@@ -226,6 +226,20 @@ void NextSpotifyTrack() {
     EnumWindows(&SpotifyNextProc, 0);
 }
 
+BOOL CALLBACK SpotifyPrevProc(HWND hwnd, LPARAM) {
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (!pid) return TRUE;
+    if (!EqualsI(ProcessImageName(pid), L"Spotify.exe")) return TRUE;
+    SendMessageW(hwnd, WM_APPCOMMAND, 0, MAKELPARAM(0, APPCOMMAND_MEDIA_PREVIOUSTRACK));
+    return FALSE;
+}
+
+void PrevSpotifyTrack() {
+    EnumWindows(&SpotifyPrevProc, 0);
+}
+
 bool IsOnCurrentDesktop(HWND hwnd) {
     HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     bool uninit = (init == S_OK || init == S_FALSE);
@@ -685,33 +699,38 @@ bool Engine::HandleKey(int msg, const KBDLLHOOKSTRUCT* info) {
     if (rule.type == RT_SPOTIFY) {
         DWORD now = GetTickCount();
         SpotifyPending& pending = spotifyPending_[vk];
-        bool isDouble = pending.active && pending.vk == vk && pending.mods == mods &&
-                        (now - pending.started) <= kSpotifyDoubleMs;
-        if (isDouble) {
+        if (pending.active && (pending.vk != vk || pending.mods != mods ||
+                                (now - pending.started) > kSpotifyDoubleMs)) {
+            // Previous click sequence ended; flush it now.
             KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
-            Job nextJob = pending.job;
-            nextJob.type = RT_SPOTIFY;
-            nextJob.spotifyNext = true;
+            int action = (pending.clicks >= 3) ? 2 : (pending.clicks == 2 ? 1 : 0);
+            pending.job.type = RT_SPOTIFY;
+            pending.job.spotifyAction = action;
+            EnqueueJob(pending.job);
             pending.active = false;
-            EnqueueJob(nextJob);
-        } else {
-            if (pending.active) {
-                KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
-                EnqueueJob(pending.job);
-                pending.active = false;
-            }
+        }
+
+        if (!pending.active) {
             pending.active = true;
             pending.started = now;
             pending.vk = vk;
             pending.mods = mods;
+            pending.clicks = 1;
             pending.job = Job{};
             pending.job.type = RT_SPOTIFY;
-            pending.job.spotifyNext = false;
-            if (SetTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk),
-                         kSpotifyDoubleMs, &Engine::SpotifyTimerProc) == 0) {
-                pending.active = false;
-                EnqueueAction(rule);
-            }
+        } else {
+            pending.clicks = std::min(pending.clicks + 1, 3);
+            pending.started = now;
+        }
+
+        KillTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk));
+        if (SetTimer(nullptr, kSpotifyTimerBase + static_cast<UINT_PTR>(vk),
+                     kSpotifyDoubleMs, &Engine::SpotifyTimerProc) == 0) {
+            int action = (pending.clicks >= 3) ? 2 : (pending.clicks == 2 ? 1 : 0);
+            pending.job.type = RT_SPOTIFY;
+            pending.job.spotifyAction = action;
+            EnqueueJob(pending.job);
+            pending.active = false;
         }
     } else {
         if (rule.repeat && rule.type == RT_SENDKEYS) StartRepeat(vk, rule);
@@ -784,7 +803,8 @@ void Engine::RunJob(const Job& job) {
         RunMacro(job.target);
         break;
     case RT_SPOTIFY:
-        if (job.spotifyNext) NextSpotifyTrack();
+        if (job.spotifyAction == 1) NextSpotifyTrack();
+        else if (job.spotifyAction == 2) PrevSpotifyTrack();
         else ToggleSpotify();
         break;
     default:
@@ -959,6 +979,9 @@ void CALLBACK Engine::SpotifyTimerProc(HWND, UINT, UINT_PTR id, DWORD) {
         KillTimer(nullptr, id);
         return;
     }
+    int action = (pending.clicks >= 3) ? 2 : (pending.clicks == 2 ? 1 : 0);
+    pending.job.type = RT_SPOTIFY;
+    pending.job.spotifyAction = action;
     engine.EnqueueJob(pending.job);
     pending.active = false;
     KillTimer(nullptr, id);
